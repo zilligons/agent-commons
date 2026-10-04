@@ -4,7 +4,7 @@ import { storage } from "./storage";
 
 const snapshot=JSON.parse(JSON.stringify(engine.state));
 try {
-  const lexicon={"round trip integrity":"~0~","semantic equivalence":"~1~","backward compatible protocol":"~2~"};
+  const lexicon={"round trip integrity":"~0~","semantic equivalence":"~1~","backward compatible protocol":"~2~","Confirm round trip integrity":"~3~"};
   for(const sample of corpus)assert.equal(decode(encode(sample,lexicon),lexicon),sample);
   for(let i=0;i<500;i++){
     const sample=[corpus[i%corpus.length],"~0~","~1~","~~","தமிழ்",String.fromCodePoint(0x1f600+i%50),"\n",corpus[(i*7)%corpus.length]].join(i%2?" ":"");

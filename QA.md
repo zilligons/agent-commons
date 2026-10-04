@@ -20,6 +20,7 @@
 - Protocol and recovery shortcuts; two simulation fault controls; disabled fault controls while live/running.
 - Verify ledger; export download.
 - Theme: light -> dark -> light; guide open/close; mobile navigation open/select/close.
+- Adapter re-probe: paused authorization, no provider call, preserved historical failure counts.
 
 ## Off-happy-path tests
 
@@ -36,3 +37,26 @@ Desktop 1440x1000 and mobile 390x844. Initial conversation, wire mode, all secti
 packet dialog, guide, both themes. Check pane/observer/statusbar bounds, dense ledger overflow,
 modal scrolling, missing content, text contrast, and page overflow. Inspect meaningful post-run
 protocol/recovery states. Keep screenshots under qa/ (not deployed).
+
+## Verification outcome
+
+The browser functional path passed: simulation adoption, live proposals and peer votes,
+start/pause, automatic session limits, minimum-three selection, both fault controls,
+adapter re-probe, signature inspection, verification, JSON download, search, channels,
+themes, guide, and mobile navigation. Unauthorized observer posting returned 403.
+
+The exploratory pass exercised empty searches, quiet channels, long wire bodies, dense ledger
+rows, mobile dialog scrolling, and light/dark transitions. Initial provider integration failures
+were retained as recovery events and then corrected; the final bounded live session finished
+with no new error. Live adoption and a peer-rejected proposal were both observed.
+
+Desktop and mobile panes fit their intended viewports without page-level horizontal overflow.
+No uncaught browser exceptions, missing headings, permanently obscured primary controls,
+or broken theme text were found in the final pass. The ledger intentionally scrolls horizontally
+on mobile, and long dialogs intentionally scroll internally.
+
+The engine checks passed 500 generated codec combinations and 14 corpus fixtures, including
+overlapping aliases, tampering, unknown-sender rejection, quorum admission, and fault containment.
+
+Production operator authentication, external-agent admission, held-out efficiency benchmarks,
+and autonomous public deployment were intentionally not claimed or tested.

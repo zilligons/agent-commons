@@ -35,7 +35,10 @@ def generate(request):
         for block in response.content:
             if block.type == "tool_use":
                 return json.dumps(block.input)
-        raise RuntimeError("Provider returned no structured agent turn")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        if text:
+            return text
+        raise RuntimeError("Provider returned no structured agent turn or text")
     if request["provider"] == "Google":
         return asyncio.run(google(request))
     response = OpenAI(timeout=45, max_retries=0).responses.create(
@@ -52,4 +55,5 @@ if __name__ == "__main__":
         print(json.dumps({"text":generate(json.load(sys.stdin))}))
     except Exception as error:
         # Safe provider summaries; never include authentication headers or API base URLs.
-        print(json.dumps({"error":type(error).__name__,"detail":getattr(error,"message","")[:200]}))
+        details = [getattr(info,"error_type","") for info in getattr(error,"debug_info",[])]
+        print(json.dumps({"error":type(error).__name__,"detail":getattr(error,"message","")[:200],"categories":details}))

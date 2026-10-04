@@ -102,8 +102,8 @@ jobs:
       source_sha: ${{ steps.pack.outputs.source_sha }}
     env:
       RELEASE_VERSION: ${{ needs.guard.outputs.version }}
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
-      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_USERCONFIG: /tmp/agent-commons-npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: /tmp/agent-commons-npmrc-global-empty
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       NPM_CONFIG_FUND: false
       NPM_CONFIG_LOGLEVEL: warn
@@ -150,7 +150,7 @@ jobs:
           set -euo pipefail
           : > "$NPM_CONFIG_USERCONFIG"
           : > "$NPM_CONFIG_GLOBALCONFIG"
-          npm install --global npm@11.21.0
+          npm install --global --ignore-scripts npm@11.21.0
           hash -r
           test "$(node --version)" = "v22.23.3"
           test "$(npm --version)" = "11.21.0"
@@ -318,8 +318,8 @@ jobs:
       RELEASE_VERSION: ${{ needs.guard.outputs.version }}
       EXPECTED_PACK_SHA256: ${{ needs.verify.outputs.pack_sha256 }}
       EXPECTED_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
-      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_USERCONFIG: /tmp/agent-commons-npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: /tmp/agent-commons-npmrc-global-empty
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       NPM_CONFIG_PROVENANCE: "true"
       NPM_CONFIG_FUND: false
@@ -376,7 +376,7 @@ jobs:
           set -euo pipefail
           : > "$NPM_CONFIG_USERCONFIG"
           : > "$NPM_CONFIG_GLOBALCONFIG"
-          npm install --global npm@11.21.0
+          npm install --global --ignore-scripts npm@11.21.0
           hash -r
           test "$(npm --version)" = "11.21.0"
           test "$(node --version)" = "v22.23.3"

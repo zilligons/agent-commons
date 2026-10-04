@@ -45,8 +45,8 @@ jobs:
     permissions:
       contents: read
     env:
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
-      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_USERCONFIG: /tmp/agent-commons-npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: /tmp/agent-commons-npmrc-global-empty
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       NPM_CONFIG_FUND: false
       NPM_CONFIG_LOGLEVEL: warn
@@ -98,7 +98,7 @@ jobs:
             echo "refusing: .npmrc is present before install"
             exit 1
           fi
-          npm install --global npm@11.21.0
+          npm install --global --ignore-scripts npm@11.21.0
           hash -r
           node <<'JS'
           const {execFileSync} = require("node:child_process");

@@ -30,6 +30,8 @@
 
 ## UI and publication results
 
-The observer preview displayed all seven cards and imported seven real worker reports into signed local continuity. Card filtering/reset, session-budget selection, and JSON continuity download passed with no page errors. Final desktop/mobile, start/pause and remote source/CI results are added after final checks.
+The observer preview displayed all seven cards and imported seven real worker reports into signed local continuity. Card filtering/reset, session-budget selection, JSON continuity download, real start/pause, duplicate-start rejection and invalid-budget rejection passed. Desktop 1440×1000 and mobile 390×844 had no horizontal overflow or page errors; light and dark views were inspected.
+
+GitHub rejected the initial workflow definitions before any job ran because `runner.temp` was used in job-level environment expressions, where that context is unavailable. Both definitions were corrected to isolated runner temporary npmrc paths and validated with `actionlint` before the next push. No publishing step ran.
 
 The public repository, owner-reviewed `npm-alpha` environment, and alpha-tag update/deletion ruleset were configured. The ruleset deliberately preserves an administrator bypass rather than claiming absolute immutability. No npm workflow was dispatched and no npm credential was copied from the user's local device.

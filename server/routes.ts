@@ -24,6 +24,10 @@ export async function registerRoutes(
     }catch(e:any){res.status(400).json({message:e.message})}
   });
   app.post("/api/cohort/pause",(_req,res)=>{cohortConsole.pause();res.json({ok:true})});
+  app.post("/api/cohort/probe",(_req,res)=>{
+    try{cohortConsole.startProbe();res.json({ok:true,scope:"exact-model transport checks; no substitutions",maxCalls:7})}
+    catch(e:any){res.status(400).json({message:e.message})}
+  });
   app.post("/api/cohort/import",(_req,res)=>{try{res.json(cohortConsole.importReports())}catch(e:any){res.status(400).json({message:e.message})}});
   app.get("/api/cohort/export",(_req,res)=>{
     res.setHeader("Content-Disposition",'attachment; filename="agent-commons-cohort.json"');

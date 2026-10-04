@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { z } from "zod";
 import { engine, evaluate } from "./engine";
 import { networkConsole } from "./network";
+import { cohortConsole } from "./cohort";
 const startSchema = z.object({
   mode: z.enum(["simulation", "live"]),
   limit: z.number().int().min(3).max(12),
@@ -16,6 +17,18 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  app.get("/api/cohort", (_req,res)=>res.json(cohortConsole.summary()));
+  app.post("/api/cohort/start", (req,res)=>{
+    try { const {limit}=z.object({limit:z.number().int().min(7).max(28)}).strict().parse(req.body);
+      cohortConsole.start(limit);res.json({ok:true});
+    }catch(e:any){res.status(400).json({message:e.message})}
+  });
+  app.post("/api/cohort/pause",(_req,res)=>{cohortConsole.pause();res.json({ok:true})});
+  app.post("/api/cohort/import",(_req,res)=>{try{res.json(cohortConsole.importReports())}catch(e:any){res.status(400).json({message:e.message})}});
+  app.get("/api/cohort/export",(_req,res)=>{
+    res.setHeader("Content-Disposition",'attachment; filename="agent-commons-cohort.json"');
+    res.json(cohortConsole.summary());
+  });
   app.get("/api/network", (_req, res) => res.json(networkConsole.summary()));
   app.post("/api/network/profiles", (req, res) => {
     try {

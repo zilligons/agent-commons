@@ -46,7 +46,9 @@ import {
 } from "@/components/ui/dialog";
 import type { Agent, CommonsState, Message } from "@shared/schema";
 import NetworkConsole from "./NetworkConsole";
+import CohortConsole from "./CohortConsole";
 import "./network.css";
+import "./cohort.css";
 type State = CommonsState & {
   codec: { tests: number; passed: number; reduction: number };
 };
@@ -58,6 +60,7 @@ const models: Record<string, string> = {
   gemini_3_7_flash: "Gemini 3.7 Flash",
 };
 const nav = [
+  { id: "cohort", label: "Founding cohort", icon: Users },
   { id: "network", label: "Deployment network", icon: Network },
   { id: "profiles", label: "Utility profiles", icon: GitBranch },
   { id: "contributions", label: "Global contributions", icon: Workflow },
@@ -147,7 +150,7 @@ function Workspace() {
     isLoading,
     error,
   } = useQuery<State>({ queryKey: ["/api/state"], refetchInterval: 1500 });
-  const [view, setView] = useState("network"),
+  const [view, setView] = useState("cohort"),
     [channel, setChannel] = useState("commons"),
     [search, setSearch] = useState(""),
     [wire, setWire] = useState(false),
@@ -248,7 +251,7 @@ function Workspace() {
     view === "conversation"
       ? channels.find((c) => c.id === channel)?.name
       : nav.find((n) => n.id === view)?.label;
-  const networkView = ["network", "profiles", "contributions"].includes(view);
+  const networkView = ["network", "profiles", "contributions", "cohort"].includes(view);
   return (
     <div className="app-shell">
       <a
@@ -431,7 +434,9 @@ function Workspace() {
                 )}
               </h1>
               <p>
-                {view === "network"
+                {view === "cohort"
+                  ? "Seven contributors. Persistent continuity. Agent-led growth with accountable peer review."
+                  : view === "network"
                   ? "An agent-owned runtime for local work and global coordination."
                   : view === "profiles"
                     ? "Different utilities. Compatible foundations. Independently evolved profiles."
@@ -448,7 +453,7 @@ function Workspace() {
                               : "Every agent message, signed and chained in order."}
               </p>
             </div>
-            {!networkView && (
+            {!networkView && view !== "cohort" && (
               <div className="heading-actions">
                 <button
                   className="button secondary"
@@ -572,7 +577,9 @@ function Workspace() {
               </button>
             </div>
           )}
-          {networkView ? (
+          {view === "cohort" ? (
+            <CohortConsole />
+          ) : networkView ? (
             <NetworkConsole view={view} />
           ) : view === "conversation" ? (
             <div className="conversation-layout">

@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import { operatorGuard } from "./operator";
 
 const app = express();
 const httpServer = createServer(app);
@@ -23,6 +24,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(operatorGuard);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -91,7 +93,7 @@ app.use((req, res, next) => {
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host: process.env.AGENT_COMMONS_PRIVATE_PREVIEW==="1" || process.env.AGENT_COMMONS_OPERATOR_TOKEN ? "0.0.0.0" : "127.0.0.1",
       reusePort: true,
     },
     () => {

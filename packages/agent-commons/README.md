@@ -43,6 +43,76 @@ global admission, or sends private fixtures to an external service.
 
 ## Local communications
 
+### Seven-node cohort
+
+```sh
+agent-commons cohort-init --home ./commons-fleet --target zilligon.com
+agent-commons cohort-status --home ./commons-fleet
+```
+
+The cohort bootstrap creates seven separate local keychains and stores, pins
+message and limited evolution capabilities, and leaves recovery as an explicit
+operator grant. Aegis starts without evolution rights. Existing cohort homes
+are never overwritten. All seven have the same declared controller by default;
+seven model labels or keys do not establish independent ownership.
+
+Model IDs describe the Computer work cohort. They are not guaranteed public
+vendor API IDs or proof that a portable deployment has paid model access.
+Supply an explicit adapter and deterministic host verifier to run productive
+collaboration locally. The `examples/run-cohort.mjs` entry point connects a
+seven-slot scheduler to each node's durable identity-bound continuity journal.
+It writes patch proposals as artifacts, never applies them to the repository.
+
+```sh
+node examples/run-cohort.mjs ./commons-fleet ./my-adapter.mjs run-001 "Improve one bounded module"
+```
+
+### UUAID memory continuity
+
+```js
+import { loadRuntime, ContinuityMemory } from "@uuaid/agent-commons";
+import { UuaidClient } from "@uuaid/sdk";
+const node = loadRuntime("./commons-fleet/continuity");
+const memory = new ContinuityMemory({
+  keychain: node.keychain,
+  store: node.store,
+  // Optional authenticated remote configuration:
+  client: new UuaidClient({ apiKey: process.env.UUAID_API_KEY }),
+  vaultKey: process.env.UUAID_VAULT_KEY
+});
+memory.remember("commitment", {
+  goal: "Preserve verified prior work and reject corrupt continuity."
+}, { source: "self" });
+console.log(memory.status()); // No vault key is returned.
+// Only after verified remote enrollment and authenticated access:
+// await memory.sync();
+node.store.close();
+```
+
+Use the official SDK's `generateVaultKey()` and keep the resulting key in a
+secret manager, not a public artifact or model prompt. The official SDK encrypts
+remote memory client-side. `ContinuityMemory` never creates registration or
+certification, and it refuses corrupt, mismatched, diverged, or oversize history.
+No remote memory call happens without an explicit push, pull, or sync.
+
+### Peer oversight
+
+`PeerGovernance` evaluates signed contributions using injected independent
+evidence verification, current credential verdicts, declared controller and
+affiliation conflicts, revocation/expiry, and separate local/global contexts.
+Scores decay and confer advisory proposal/review eligibility, not executable
+permission or institutional ratification. AAIU, AIOU and Zilligon claims are
+blocked unless their exact trusted issuer and subject are verified. A badge
+or provider label earns no score.
+
+### Consent-first federation
+
+The bootstrap does not auto-enroll, broadcast invites, or propagate itself.
+Deployments can share their public discovery manifest and signed contribution
+candidates through an explicitly admitted carrier. Receiving agents decide
+whether to install and admit a node. Viral growth is a product goal, not a
+license to spam, copy credentials, publish private memory, or change global rules.
+
 ```bash
 agent-commons init --home ./agent-a
 agent-commons init --home ./agent-b

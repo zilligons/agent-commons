@@ -1,0 +1,260 @@
+# Provenance CI for @uuaid/agent-commons. This workflow never publishes.
+#
+# Pinned action commits verified 2026-10-04 against public GitHub reads
+# (tag object type was "commit", so the ref SHA is the commit SHA):
+#   actions/checkout v7.0.1
+#     3d3c42e5aac5ba805825da76410c181273ba90b1
+#     https://github.com/actions/checkout/releases/tag/v7.0.1
+#     https://api.github.com/repos/actions/checkout/commits/v7.0.1
+#   actions/setup-node v7.0.0
+#     820762786026740c76f36085b0efc47a31fe5020
+#     https://github.com/actions/setup-node/releases/tag/v7.0.0
+#     https://api.github.com/repos/actions/setup-node/commits/v7.0.0
+#
+# This file is the automatic test workflow. It has no id-token permission
+# and no publish step. Pushing to main must not publish.
+#
+# Toolchain is Node 22, not Node 24. Floor from npm trusted publishing is
+# Node >=22.14.0 and npm >=11.5.1. Exact pins: Node 22.23.3 (newest 22.x on
+# https://nodejs.org/dist/index.json as of 2026-10-04; that build bundles
+# npm 10.9.9, so npm is upgraded) and npm 11.21.0 (newest 11.x; also the
+# 11.x minimum for OIDC dist-tags).
+# https://docs.npmjs.com/trusted-publishers/
+# https://registry.npmjs.org/npm/11.21.0
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*-alpha.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Test and cold-install packed package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      NPM_CONFIG_FUND: false
+      NPM_CONFIG_LOGLEVEL: warn
+    steps:
+      - name: Refuse credential environment and self-hosted runners
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const forbidden = [
+            "NPM_TOKEN",
+            "NODE_AUTH_TOKEN",
+            "NPM_AUTH_TOKEN",
+            "NPM_PASSWORD",
+            "NPM_CONFIG__AUTH",
+            "AGENT_COMMONS_PASSPHRASE"
+          ];
+          const present = forbidden.filter((key) => process.env[key]);
+          if (present.length) {
+            console.error("refusing: credential environment present: " + present.join(", "));
+            process.exit(1);
+          }
+          if (process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
+            console.error("refusing: runner is not github-hosted");
+            process.exit(1);
+          }
+          console.log("credential environment: absent");
+          console.log("runner environment: github-hosted");
+          JS
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Node 22.23.3 without npm auth
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.3
+          check-latest: false
+          package-manager-cache: false
+
+      - name: Pin npm 11.21.0
+        run: |
+          set -euo pipefail
+          : > "$NPM_CONFIG_USERCONFIG"
+          : > "$NPM_CONFIG_GLOBALCONFIG"
+          if [ -f .npmrc ] || [ -f packages/agent-commons/.npmrc ]; then
+            echo "refusing: .npmrc is present before install"
+            exit 1
+          fi
+          npm install --global npm@11.21.0
+          hash -r
+          node <<'JS'
+          const {execFileSync} = require("node:child_process");
+          const nodeVersion = process.versions.node;
+          if (nodeVersion !== "22.23.3") {
+            console.error("expected Node 22.23.3, got " + nodeVersion);
+            process.exit(1);
+          }
+          const [major, minor] = nodeVersion.split(".").map(Number);
+          if (major < 22 || (major === 22 && minor < 14)) {
+            console.error("Node is below 22.14.0");
+            process.exit(1);
+          }
+          const npmVersion = execFileSync("npm", ["--version"], {encoding: "utf8"}).trim();
+          if (npmVersion !== "11.21.0") {
+            console.error("expected npm 11.21.0, got " + npmVersion);
+            process.exit(1);
+          }
+          const floor = [11, 5, 1];
+          const got = npmVersion.split(".").map(Number);
+          for (let i = 0; i < 3; i += 1) {
+            if (got[i] > floor[i]) break;
+            if (got[i] < floor[i]) {
+              console.error("npm is below 11.5.1");
+              process.exit(1);
+            }
+          }
+          console.log("node " + nodeVersion);
+          console.log("npm " + npmVersion);
+          JS
+
+      - name: Install, test, pack, and cold-install
+        id: pack
+        run: |
+          set -euo pipefail
+          test -n "$RUNNER_TEMP"
+          PACK_DIR="$RUNNER_TEMP/pack"
+          CONSUMER="$RUNNER_TEMP/cold-consumer"
+          HOME_DIR="$RUNNER_TEMP/cold-home"
+          case "$HOME_DIR" in
+            "$RUNNER_TEMP"/*) ;;
+            *) echo "cold home is not under runner temp"; exit 1 ;;
+          esac
+          mkdir -p "$PACK_DIR" "$CONSUMER"
+          cd packages/agent-commons
+          npm ci --ignore-scripts
+          npm test
+          npm pack --ignore-scripts --pack-destination "$PACK_DIR" --json > "$RUNNER_TEMP/pack.json"
+          node <<'JS'
+          const {execFileSync} = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const packDir = path.join(process.env.RUNNER_TEMP, "pack");
+          const consumer = path.join(process.env.RUNNER_TEMP, "cold-consumer");
+          const home = path.join(process.env.RUNNER_TEMP, "cold-home");
+          const packed = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, "pack.json"), "utf8"));
+          const entry = Array.isArray(packed) ? packed[0] : packed;
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          if (pkg.name !== "@uuaid/agent-commons") throw new Error("unexpected package name");
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(pkg.version)) {
+            throw new Error("package.json version is not an explicit alpha version");
+          }
+          if (lock.version !== pkg.version || lock.packages?.[""]?.version !== pkg.version) {
+            throw new Error("package-lock.json version does not match package.json");
+          }
+          const expectedName = "uuaid-agent-commons-" + pkg.version + ".tgz";
+          if (entry.filename !== expectedName) throw new Error("unexpected tarball filename");
+          const tarball = path.join(packDir, entry.filename);
+          if (!fs.existsSync(tarball)) throw new Error("tarball missing");
+          const names = execFileSync("tar", ["-tzf", tarball], {encoding: "utf8"}).trim().split("\n");
+          const forbidden = /(^|\/)(\.npmrc|\.env|local-secret|identity\.json|credentials\.json)$|\.(pem|key)$/;
+          const hits = names.filter((name) => forbidden.test(name) || name.includes("node_modules/"));
+          if (hits.length) {
+            console.error("tarball contains credential-like or installed paths");
+            console.error(hits.join("\n"));
+            process.exit(1);
+          }
+          fs.writeFileSync(path.join(consumer, "package.json"), JSON.stringify({
+            name: "agent-commons-cold-install-check",
+            private: true,
+            version: "0.0.0"
+          }) + "\n");
+          execFileSync("npm", ["install", "--ignore-scripts", tarball], {cwd: consumer, stdio: "inherit"});
+          const prefix = path.join(consumer, "node_modules", "@uuaid", "agent-commons");
+          execFileSync("npm", ["test"], {cwd: prefix, stdio: "inherit"});
+          const cli = path.join(prefix, "bin", "agent-commons.mjs");
+          const help = execFileSync(process.execPath, [cli, "help"], {cwd: consumer, encoding: "utf8"});
+          if (!help.includes("cohort-init")) throw new Error("packed CLI help lacks cohort-init");
+          const initOut = execFileSync(process.execPath, [cli, "init", "--home", home, "--target", "zilligon.com"], {cwd: consumer, encoding: "utf8"});
+          const init = JSON.parse(initOut);
+          if (init.target !== "zilligon.com") throw new Error("init target mismatch");
+          if (init.registryRegistration !== "not-performed" || init.certified !== false) {
+            throw new Error("init claimed registration or certification");
+          }
+          if (init.keyProtection !== "file-permissions-with-colocated-local-secret") {
+            throw new Error("unexpected key protection mode");
+          }
+          if (!String(init.home).startsWith(process.env.RUNNER_TEMP + path.sep)) {
+            throw new Error("init home escaped runner temp");
+          }
+          if (!fs.existsSync(path.join(home, "local-secret")) || !fs.existsSync(path.join(home, "identity.json"))) {
+            throw new Error("init did not create an isolated home");
+          }
+          const doctorOut = execFileSync(process.execPath, [cli, "doctor", "--home", home], {cwd: consumer, encoding: "utf8"});
+          const doctor = JSON.parse(doctorOut);
+          if (doctor.target !== "zilligon.com") throw new Error("doctor target mismatch");
+          if (doctor.packageRelease !== pkg.version) {
+            throw new Error("doctor.packageRelease does not match package.json; bin/agent-commons.mjs hardcodes packageRelease and must be updated in a separate change before this version can be treated as release evidence");
+          }
+          const smoke = [
+            "import { AgentCommons, ContinuityMemory, PeerGovernance, CollaborationScheduler } from '@uuaid/agent-commons';",
+            "import { ContinuityMemory as ContinuityExport } from '@uuaid/agent-commons/continuity';",
+            "import { PeerGovernance as GovernanceExport } from '@uuaid/agent-commons/governance';",
+            "import { CollaborationScheduler as CollaborationExport } from '@uuaid/agent-commons/collaboration';",
+            "import { initializeCohort } from '@uuaid/agent-commons/cohort';",
+            "for (const exported of [AgentCommons, ContinuityMemory, PeerGovernance, CollaborationScheduler, ContinuityExport, GovernanceExport, CollaborationExport, initializeCohort]) {",
+            "  if (typeof exported !== 'function') process.exit(1);",
+            "}"
+          ].join("\n");
+          execFileSync(process.execPath, ["--input-type=module", "-e", smoke], {cwd: consumer, stdio: "inherit"});
+          const cohortHome = path.join(process.env.RUNNER_TEMP, "cold-cohort");
+          const cohort = JSON.parse(execFileSync(process.execPath, [cli, "cohort-init", "--home", cohortHome, "--target", "zilligon.com"], {cwd: consumer, encoding: "utf8"}));
+          const roster = ["continuity", "governance", "collaboration", "release", "integration", "sustainability", "security"];
+          const ids = new Set((cohort.members || []).map((member) => member.id));
+          if (cohort.target !== "zilligon.com" || cohort.registration !== "not-performed" || cohort.certified !== false || ids.size !== 7 || roster.some((id) => !ids.has(id))) {
+            throw new Error("packed cohort-init did not create the seven local roster homes");
+          }
+          if ((cohort.members || []).some((member) => !String(member.home || "").startsWith(process.env.RUNNER_TEMP + path.sep))) {
+            throw new Error("cohort home escaped runner temp");
+          }
+          const cohortStatus = JSON.parse(execFileSync(process.execPath, [cli, "cohort-status", "--home", cohortHome], {cwd: consumer, encoding: "utf8"}));
+          if (cohortStatus.members?.length !== 7) throw new Error("packed cohort-status did not reload seven members");
+          fs.rmSync(home, {recursive: true, force: true});
+          fs.rmSync(cohortHome, {recursive: true, force: true});
+          if (fs.existsSync(home) || fs.existsSync(cohortHome)) throw new Error("cold home cleanup failed");
+          const sha = execFileSync("sha256sum", [tarball], {encoding: "utf8"}).split(/\s+/)[0];
+          if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error("bad sha256");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "pack_sha256=" + sha + "\n");
+          console.log("cold install: ok");
+          console.log("packed cohort-init: 7 local homes, registration not-performed");
+          console.log("packed SDK exports: ContinuityMemory PeerGovernance CollaborationScheduler");
+          console.log("tarball: " + entry.filename);
+          console.log("sha256: " + sha);
+          console.log("doctor target: " + doctor.target);
+          console.log("doctor packageRelease: " + doctor.packageRelease);
+          JS
+          cd "$GITHUB_WORKSPACE"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "workflow dirtied the worktree"
+            git status --porcelain
+            exit 1
+          fi
+          found=$(find "$GITHUB_WORKSPACE" -path '*/node_modules' -prune -o -type f \( -name .npmrc -o -name local-secret -o -name identity.json -o -name '*.pem' -o -name '*.key' \) -print)
+          if [ -n "$found" ]; then
+            echo "credential-like files present in workspace"
+            printf '%s\n' "$found"
+            exit 1
+          fi

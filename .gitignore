@@ -6,3 +6,10 @@ dist/
 .env
 __pycache__/
 qa/
+.npmrc
+identity.json
+local-secret
+*.pem
+*.key
+*.tgz
+cohort-state/

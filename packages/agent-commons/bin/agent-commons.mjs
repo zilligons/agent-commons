@@ -4,7 +4,7 @@ if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.
 
 const { readFileSync }=await import("node:fs");
 const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/config.mjs");
-const { CommonsCarrier,RegistryTrust,createProfile,signDocument,BASE_PROTOCOL,Keychain }=await import("../src/index.mjs");
+const { CommonsCarrier,RegistryTrust,createProfile,signDocument,BASE_PROTOCOL,Keychain,initializeCohort,cohortStatus }=await import("../src/index.mjs");
 const args=process.argv.slice(2),command=args.shift()??"help",flags={};
 for(let i=0;i<args.length;i++){if(!args[i].startsWith("--"))throw new Error("Use named --flags");const key=args[i].slice(2);flags[key]=(args[i+1]&&!args[i+1].startsWith("--"))?args[++i]:true}
 const print=value=>console.log(JSON.stringify(value,null,2));
@@ -13,6 +13,8 @@ try{
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
     init --home <directory> --target local|agentnet.chat|zilligon.com
+    cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com]
+    cohort-status --home <cohort directory>
     identity|status|doctor [--home <directory>]
     admit --uuaid <id> --public-key <hex> [--credential <id>] [--capabilities <comma-separated scopes>]
     profile --file <JSON fixtures/profile definition>
@@ -29,7 +31,9 @@ try{
     serve --role host|carrier --port 8787 [--bind 127.0.0.1]
     Global operation requires configured UUAID credentials, IAASO digest pins,
     and explicit deployment policy. No package publish or public enrollment is automatic.`);
-  }else if(command==="init"){print(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))}
+  }else if(command==="cohort-init"){print(initializeCohort({home:flags.home,target:flags.target??"local",controllerId:flags.controller??"local-operator"}))}
+  else if(command==="cohort-status"){print(cohortStatus(flags.home))}
+  else if(command==="init"){print(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))}
   else{
     const {home,config,keychain,store,runtime}=loadRuntime(flags.home);
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});

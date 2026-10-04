@@ -1,0 +1,437 @@
+# Provenance release for @uuaid/agent-commons.
+#
+# Trusted publisher identity, if later configured, must match this filename
+# exactly: release.yml. The workflow name below is not the npm claim.
+# https://docs.npmjs.com/trusted-publishers/
+#
+# Dispatch is explicit. Push and tag creation do not publish. This file
+# does not bump, tag, or rewrite package.json.
+# The running workflow definition must be refs/heads/main. The published
+# source is only the annotated tag v<version> named by the input.
+#
+# Node 22 is required (pinned to 22.23.3, which is >= 22.14.0). Do not
+# switch this workflow to Node 24. npm is pinned to 11.21.0 (>= 11.5.1).
+#
+# id-token: write is granted only on the publish job, and only after the
+# npm-alpha GitHub environment gate. That gate is not npm configuration.
+# OIDC still fails closed until an npm trusted publisher is configured for
+# this filename, repository, and environment. No npm token or .npmrc auth
+# line is read, written, or printed, and there is no token fallback.
+#
+# Pinned action commits verified 2026-10-04 via public GitHub reads.
+# Tag object type was "commit", so these are commit SHAs, not tag-object SHAs:
+#   actions/checkout v7.0.1 3d3c42e5aac5ba805825da76410c181273ba90b1
+#     https://api.github.com/repos/actions/checkout/commits/v7.0.1
+#   actions/setup-node v7.0.0 820762786026740c76f36085b0efc47a31fe5020
+#     https://api.github.com/repos/actions/setup-node/commits/v7.0.0
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact immutable npm version. Must already match packages/agent-commons/package.json and annotated tag v<version>. This is not a version bump. Example: 0.2.0-alpha.1'
+        required: true
+        type: string
+      npm_trusted_publisher:
+        description: 'Check only after npm trust github is configured for release.yml, zilligons/agent-commons, and environment npm-alpha. Unchecked dispatch does not publish and does not mint an OIDC token.'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-alpha-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Validate explicit dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Require main workflow ref, public repo, and alpha version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          DISPATCH_REF: ${{ github.ref }}
+          REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "refusing: runner is not github-hosted"
+            exit 1
+          fi
+          if [ "$DISPATCH_REF" != "refs/heads/main" ]; then
+            echo "refusing: workflow_dispatch must run the reviewed workflow on refs/heads/main"
+            exit 1
+          fi
+          if [ "$REPO_VISIBILITY" != "public" ]; then
+            echo "refusing: provenance requires a public repository"
+            exit 1
+          fi
+          if [ "$GITHUB_SERVER_URL" != "https://github.com" ]; then
+            echo "refusing: provenance requires github.com"
+            exit 1
+          fi
+          node <<'JS'
+          const version = process.env.RELEASE_VERSION || "";
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(version)) {
+            console.error("version rejected: expected explicit X.Y.Z-alpha.N with no v prefix, range, latest, or other prerelease");
+            process.exit(1);
+          }
+          JS
+          echo "version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "dispatch version accepted"
+
+  verify:
+    name: Verify immutable tag and cold install
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      pack_sha256: ${{ steps.pack.outputs.pack_sha256 }}
+      source_sha: ${{ steps.pack.outputs.source_sha }}
+    env:
+      RELEASE_VERSION: ${{ needs.guard.outputs.version }}
+      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      NPM_CONFIG_FUND: false
+      NPM_CONFIG_LOGLEVEL: warn
+    steps:
+      - name: Refuse credential environment
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const forbidden = ["NPM_TOKEN","NODE_AUTH_TOKEN","NPM_AUTH_TOKEN","NPM_PASSWORD","NPM_CONFIG__AUTH","AGENT_COMMONS_PASSPHRASE"];
+          const present = forbidden.filter((key) => process.env[key]);
+          if (present.length) {
+            console.error("refusing: credential environment present: " + present.join(", "));
+            process.exit(1);
+          }
+          if (process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
+            console.error("refusing: runner is not github-hosted");
+            process.exit(1);
+          }
+          const version = process.env.RELEASE_VERSION || "";
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(version)) {
+            console.error("guard output failed alpha validation");
+            process.exit(1);
+          }
+          console.log("credential environment: absent");
+          JS
+
+      - name: Checkout immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ needs.guard.outputs.version }}
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node 22.23.3 without npm auth
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.3
+          check-latest: false
+          package-manager-cache: false
+
+      - name: Pin npm 11.21.0
+        run: |
+          set -euo pipefail
+          : > "$NPM_CONFIG_USERCONFIG"
+          : > "$NPM_CONFIG_GLOBALCONFIG"
+          npm install --global npm@11.21.0
+          hash -r
+          test "$(node --version)" = "v22.23.3"
+          test "$(npm --version)" = "11.21.0"
+
+      - name: Validate tag, metadata, tests, and cold install
+        id: pack
+        run: |
+          set -euo pipefail
+          TAG="v${RELEASE_VERSION}"
+          if git symbolic-ref -q HEAD >/dev/null; then
+            echo "refusing: HEAD is a branch"
+            exit 1
+          fi
+          if [ "$(git cat-file -t "refs/tags/${TAG}")" != "tag" ]; then
+            echo "refusing: ${TAG} is not an annotated tag"
+            exit 1
+          fi
+          HEAD_SHA="$(git rev-parse HEAD)"
+          TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
+          if [ "$HEAD_SHA" != "$TAG_SHA" ]; then
+            echo "refusing: checkout commit is not the annotated tag commit"
+            exit 1
+          fi
+          PACK_DIR="$RUNNER_TEMP/pack"
+          CONSUMER="$RUNNER_TEMP/cold-consumer"
+          HOME_DIR="$RUNNER_TEMP/cold-home"
+          mkdir -p "$PACK_DIR" "$CONSUMER"
+          cd packages/agent-commons
+          node <<'JS'
+          const fs = require("node:fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          const version = process.env.RELEASE_VERSION;
+          const allowedUrls = new Set([
+            "git+https://github.com/zilligons/agent-commons.git"
+          ]);
+          if (pkg.name !== "@uuaid/agent-commons") throw new Error("unexpected package name");
+          if (pkg.version !== version) throw new Error("package.json version does not match immutable dispatch version; this workflow will not rewrite package.json");
+          if (pkg.private === true) throw new Error("package is private");
+          if (lock.version !== version || lock.packages?.[""]?.version !== version) throw new Error("lockfile version mismatch");
+          const publish = pkg.publishConfig || {};
+          if (publish.access !== "public" || publish.tag !== "alpha" || publish.provenance !== true) {
+            throw new Error("publishConfig must be access public, tag alpha, provenance true");
+          }
+          if (publish.registry && publish.registry !== "https://registry.npmjs.org/") {
+            throw new Error("unexpected publishConfig.registry");
+          }
+          const repo = pkg.repository;
+          const url = repo && typeof repo === "object" ? repo.url : "";
+          if (!repo || typeof repo !== "object" || !allowedUrls.has(url) || repo.directory !== "packages/agent-commons") {
+            console.error("refusing: package.json repository metadata is not provenance-ready.");
+            console.error("required object url must be exactly git+https://github.com/zilligons/agent-commons.git and directory must be packages/agent-commons.");
+            console.error("this workflow does not edit package.json.");
+            process.exit(1);
+          }
+          console.log("package metadata: ok");
+          JS
+          npm ci --ignore-scripts
+          npm test
+          npm pack --ignore-scripts --pack-destination "$PACK_DIR" --json > "$RUNNER_TEMP/pack.json"
+          node <<'JS'
+          const {execFileSync} = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const packDir = path.join(process.env.RUNNER_TEMP, "pack");
+          const consumer = path.join(process.env.RUNNER_TEMP, "cold-consumer");
+          const home = path.join(process.env.RUNNER_TEMP, "cold-home");
+          const packed = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, "pack.json"), "utf8"));
+          const entry = Array.isArray(packed) ? packed[0] : packed;
+          const version = process.env.RELEASE_VERSION;
+          if (entry.filename !== "uuaid-agent-commons-" + version + ".tgz") throw new Error("unexpected tarball filename");
+          const tarball = path.join(packDir, entry.filename);
+          const names = execFileSync("tar", ["-tzf", tarball], {encoding: "utf8"}).trim().split("\n");
+          const forbidden = /(^|\/)(\.npmrc|\.env|local-secret|identity\.json|credentials\.json)$|\.(pem|key)$/;
+          if (names.some((name) => forbidden.test(name) || name.includes("node_modules/"))) {
+            throw new Error("tarball contains credential-like or installed paths");
+          }
+          fs.writeFileSync(path.join(consumer, "package.json"), "{\"name\":\"agent-commons-cold-install-check\",\"private\":true,\"version\":\"0.0.0\"}\n");
+          execFileSync("npm", ["install", "--ignore-scripts", tarball], {cwd: consumer, stdio: "inherit"});
+          const prefix = path.join(consumer, "node_modules", "@uuaid", "agent-commons");
+          execFileSync("npm", ["test"], {cwd: prefix, stdio: "inherit"});
+          const cli = path.join(prefix, "bin", "agent-commons.mjs");
+          const init = JSON.parse(execFileSync(process.execPath, [cli, "init", "--home", home, "--target", "zilligon.com"], {cwd: consumer, encoding: "utf8"}));
+          if (init.target !== "zilligon.com" || init.registryRegistration !== "not-performed" || init.certified !== false) {
+            throw new Error("cold init failed closed checks");
+          }
+          if (!String(init.home).startsWith(process.env.RUNNER_TEMP + path.sep)) throw new Error("init home escaped runner temp");
+          const doctor = JSON.parse(execFileSync(process.execPath, [cli, "doctor", "--home", home], {cwd: consumer, encoding: "utf8"}));
+          if (doctor.target !== "zilligon.com" || doctor.packageRelease !== version) {
+            throw new Error("doctor evidence does not match the dispatched alpha version");
+          }
+          const help = execFileSync(process.execPath, [cli, "help"], {cwd: consumer, encoding: "utf8"});
+          if (!help.includes("cohort-init")) throw new Error("packed CLI help lacks cohort-init");
+          const smoke = [
+            "import { AgentCommons, ContinuityMemory, PeerGovernance, CollaborationScheduler } from '@uuaid/agent-commons';",
+            "import { ContinuityMemory as ContinuityExport } from '@uuaid/agent-commons/continuity';",
+            "import { PeerGovernance as GovernanceExport } from '@uuaid/agent-commons/governance';",
+            "import { CollaborationScheduler as CollaborationExport } from '@uuaid/agent-commons/collaboration';",
+            "import { initializeCohort } from '@uuaid/agent-commons/cohort';",
+            "for (const exported of [AgentCommons, ContinuityMemory, PeerGovernance, CollaborationScheduler, ContinuityExport, GovernanceExport, CollaborationExport, initializeCohort]) {",
+            "  if (typeof exported !== 'function') process.exit(1);",
+            "}"
+          ].join("\n");
+          execFileSync(process.execPath, ["--input-type=module", "-e", smoke], {cwd: consumer, stdio: "inherit"});
+          const cohortHome = path.join(process.env.RUNNER_TEMP, "cold-cohort");
+          const cohort = JSON.parse(execFileSync(process.execPath, [cli, "cohort-init", "--home", cohortHome, "--target", "zilligon.com"], {cwd: consumer, encoding: "utf8"}));
+          const roster = ["continuity", "governance", "collaboration", "release", "integration", "sustainability", "security"];
+          const ids = new Set((cohort.members || []).map((member) => member.id));
+          if (cohort.target !== "zilligon.com" || cohort.registration !== "not-performed" || cohort.certified !== false || ids.size !== 7 || roster.some((id) => !ids.has(id))) {
+            throw new Error("packed cohort-init did not create the seven local roster homes");
+          }
+          if ((cohort.members || []).some((member) => !String(member.home || "").startsWith(process.env.RUNNER_TEMP + path.sep))) {
+            throw new Error("cohort home escaped runner temp");
+          }
+          const cohortStatus = JSON.parse(execFileSync(process.execPath, [cli, "cohort-status", "--home", cohortHome], {cwd: consumer, encoding: "utf8"}));
+          if (cohortStatus.members?.length !== 7) throw new Error("packed cohort-status did not reload seven members");
+          fs.rmSync(home, {recursive: true, force: true});
+          fs.rmSync(cohortHome, {recursive: true, force: true});
+          if (fs.existsSync(home) || fs.existsSync(cohortHome)) throw new Error("cold home cleanup failed");
+          const sha = execFileSync("sha256sum", [tarball], {encoding: "utf8"}).split(/\s+/)[0];
+          const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], {encoding: "utf8"}).trim();
+          if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error("checked-out tag commit is not a full SHA");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "pack_sha256=" + sha + "\nsource_sha=" + sourceSha + "\n");
+          console.log("verified tag commit " + sourceSha);
+          console.log("pack sha256 " + sha);
+          JS
+          cd "$GITHUB_WORKSPACE"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "verify job dirtied the worktree"
+            git status --porcelain
+            exit 1
+          fi
+          if [ -f .npmrc ] || [ -f packages/agent-commons/.npmrc ]; then
+            echo "refusing: .npmrc appeared"
+            exit 1
+          fi
+
+  refuse-untrusted-publish:
+    name: Refuse publish without npm trusted publisher
+    needs: [guard, verify]
+    if: inputs.npm_trusted_publisher != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Do not publish
+        run: |
+          echo "refusing publish: npm_trusted_publisher was not confirmed"
+          echo "GitHub environment approval and id-token are not a substitute for npm trust"
+          echo "no OIDC token was requested"
+          exit 1
+
+  publish:
+    name: Publish public alpha with provenance
+    needs: [guard, verify]
+    if: inputs.npm_trusted_publisher == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: npm-alpha
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.guard.outputs.version }}
+      EXPECTED_PACK_SHA256: ${{ needs.verify.outputs.pack_sha256 }}
+      EXPECTED_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npmrc-empty
+      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/npmrc-global-empty
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      NPM_CONFIG_PROVENANCE: "true"
+      NPM_CONFIG_FUND: false
+      NPM_CONFIG_LOGLEVEL: warn
+    steps:
+      - name: Refuse credential environment
+        env:
+          REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "refusing: trusted publishing requires a GitHub-hosted runner"
+            exit 1
+          fi
+          if [ "$REPO_VISIBILITY" != "public" ]; then
+            echo "refusing: provenance is not generated for a non-public repository"
+            exit 1
+          fi
+          if [ "$GITHUB_SERVER_URL" != "https://github.com" ]; then
+            echo "refusing: provenance requires github.com"
+            exit 1
+          fi
+          node <<'JS'
+          const forbidden = ["NPM_TOKEN","NODE_AUTH_TOKEN","NPM_AUTH_TOKEN","NPM_PASSWORD","NPM_CONFIG__AUTH","AGENT_COMMONS_PASSPHRASE"];
+          const present = forbidden.filter((key) => process.env[key]);
+          if (present.length) {
+            console.error("refusing: credential environment present: " + present.join(", "));
+            process.exit(1);
+          }
+          if (!/^[0-9a-f]{64}$/.test(process.env.EXPECTED_PACK_SHA256 || "")) process.exit(1);
+          if (!/^[0-9a-f]{40}$/.test(process.env.EXPECTED_SOURCE_SHA || "")) process.exit(1);
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(process.env.RELEASE_VERSION || "")) process.exit(1);
+          console.log("credential environment: absent");
+          console.log("id-token scope: publish job only");
+          JS
+
+      - name: Checkout the same immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ needs.guard.outputs.version }}
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node 22.23.3 without registry auth file
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.3
+          check-latest: false
+          package-manager-cache: false
+
+      - name: Pin npm 11.21.0
+        run: |
+          set -euo pipefail
+          : > "$NPM_CONFIG_USERCONFIG"
+          : > "$NPM_CONFIG_GLOBALCONFIG"
+          npm install --global npm@11.21.0
+          hash -r
+          test "$(npm --version)" = "11.21.0"
+          test "$(node --version)" = "v22.23.3"
+
+      - name: Republish only the verified pack with provenance
+        working-directory: packages/agent-commons
+        run: |
+          set -euo pipefail
+          TAG="v${RELEASE_VERSION}"
+          if git symbolic-ref -q HEAD >/dev/null; then
+            echo "refusing: HEAD is a branch"
+            exit 1
+          fi
+          if [ "$(git cat-file -t "refs/tags/${TAG}")" != "tag" ]; then
+            echo "refusing: tag is not annotated"
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "${TAG}^{commit}")" ]; then
+            echo "refusing: tag commit moved"
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo "refusing: publish commit does not match verified commit"
+            exit 1
+          fi
+          if [ -f .npmrc ] || [ -f "$GITHUB_WORKSPACE/.npmrc" ]; then
+            echo "refusing: .npmrc present"
+            exit 1
+          fi
+          node <<'JS'
+          const fs = require("node:fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const version = process.env.RELEASE_VERSION;
+          const allowedUrls = new Set([
+            "git+https://github.com/zilligons/agent-commons.git"
+          ]);
+          if (pkg.name !== "@uuaid/agent-commons" || pkg.version !== version) process.exit(1);
+          const publish = pkg.publishConfig || {};
+          if (publish.access !== "public" || publish.tag !== "alpha" || publish.provenance !== true) process.exit(1);
+          const repo = pkg.repository;
+          if (!repo || typeof repo !== "object" || !allowedUrls.has(repo.url) || repo.directory !== "packages/agent-commons") {
+            console.error("refusing publish: repository metadata cannot satisfy provenance");
+            process.exit(1);
+          }
+          JS
+          mkdir -p "$RUNNER_TEMP/publish-pack"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/publish-pack" --json > "$RUNNER_TEMP/publish-pack.json"
+          PACK_SHA="$(sha256sum "$RUNNER_TEMP/publish-pack/uuaid-agent-commons-${RELEASE_VERSION}.tgz" | awk '{print $1}')"
+          if [ "$PACK_SHA" != "$EXPECTED_PACK_SHA256" ]; then
+            echo "refusing: pack digest does not match the verified cold-install pack"
+            exit 1
+          fi
+          npm publish --ignore-scripts --provenance --access public --tag alpha --registry https://registry.npmjs.org/
+          if [ -f .npmrc ] || [ -f "$GITHUB_WORKSPACE/.npmrc" ]; then
+            echo "publish wrote an .npmrc; revoke any exposed credential and inspect the run"
+            exit 1
+          fi
+          echo "publish command finished for ${RELEASE_VERSION} on dist-tag alpha"

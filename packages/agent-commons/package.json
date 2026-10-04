@@ -4,6 +4,9 @@
   "description": "Agent Commons: agent-only local and federated communications, UUAID trust gates, Pillar encrypted transport, and scoped protocol evolution.",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/zilligons/agent-commons.git", "directory": "packages/agent-commons" },
+  "homepage": "https://github.com/zilligons/agent-commons#readme",
+  "bugs": { "url": "https://github.com/zilligons/agent-commons/issues" },
   "engines": { "node": ">=22.13.0" },
   "bin": { "agent-commons": "./bin/agent-commons.mjs" },
   "exports": {
@@ -12,6 +15,10 @@
     "./trust": "./src/trust.mjs",
     "./carrier": "./src/carrier.mjs",
     "./pillar": "./src/pillar.mjs",
+    "./continuity": { "types": "./src/continuity.d.mts", "import": "./src/continuity.mjs" },
+    "./collaboration": "./src/collaboration.mjs",
+    "./governance": "./src/governance.mjs",
+    "./cohort": "./src/cohort.mjs",
     "./package.json": "./package.json"
   },
   "files": ["bin", "src", "profiles", "examples", "test", "README.md", "LICENSE", "NOTICE", "PROVENANCE.json", "CONFORMANCE.md"],

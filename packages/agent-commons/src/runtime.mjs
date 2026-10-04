@@ -32,10 +32,12 @@ export class AgentCommons {
     await this.trust.authorize(this.uuaid,this.publicKey,"commons:evolve");
     return signDocument(this.keychain,"profile-vote",{proposalId,approve,rationale});
   }
+  // Replay keys are namespaced (doc:/msg:sender:) so a peer-chosen message ID cannot poison a signed control document ID.
+  seenScoped(key,legacyId,hash){if(this.store.seen(key,hash))return true;try{return this.store.seen(legacyId,hash)}catch{return false}}
   apply(document){const next=this._applyTail.then(()=>this.applyInternal(document));this._applyTail=next.catch(()=>{});return next}
   async applyInternal(document){
     const body=verifyDocument(document);
-    if(this.store.seen(document.id,digest(document)))return {duplicate:true};
+    if(this.seenScoped(`doc:${document.id}`,document.id,digest(document)))return {duplicate:true};
     if(!Number.isFinite(Date.parse(body.createdAt))||Math.abs(Date.now()-Date.parse(body.createdAt))>86400000)throw new Error("Stale profile document");
     const capability=body.kind==="profile-contribution"?"commons:contribute":body.kind==="profile-recovery"?"commons:recover":"commons:evolve";
     await this.trust.authorize(body.issuer,body.publicKey,capability);
@@ -53,18 +55,20 @@ export class AgentCommons {
     } else if(body.kind==="profile-vote"){
       const {proposalId,approve}=body.payload;
       const p=proposals.find(p=>p.id===proposalId);
-      if(!p||p.status!=="pending"||p.author===body.issuer||Object.hasOwn(p.votes,body.issuer)||typeof approve!=="boolean")throw new Error("Ineligible or duplicate peer vote");
+      if(!p||p.status!=="pending"||p.author===body.issuer||p.authorPublicKey===body.publicKey||Object.hasOwn(p.votes,body.issuer)||Object.values(p.votes).some(v=>v.document?.publicKey===body.publicKey)||typeof approve!=="boolean")throw new Error("Ineligible or duplicate peer vote");
       p.votes[body.issuer]={approve,document};
       const parent=this.profile(p.parent);
       await this.trust.authorize(p.author,p.authorPublicKey,"commons:evolve");
       // Recheck every previously approving peer: revoked or unadmitted votes
       // cannot remain valid just because their old signature still verifies.
-      const approvals=[];
+      const approvals=[],approvalKeys=new Set();
       for(const vote of Object.values(p.votes)){
         if(!vote.approve)continue;
         const voter=verifyDocument(vote.document);
         await this.trust.authorize(voter.issuer,voter.publicKey,"commons:evolve");
-        approvals.push(voter.issuer);
+        // Quorum counts distinct public keys, never UUAID spellings, and never the proposer's own key.
+        if(voter.publicKey===p.authorPublicKey||approvalKeys.has(voter.publicKey))continue;
+        approvalKeys.add(voter.publicKey);approvals.push(voter.issuer);
       }
       if(approvals.length>=parent.quorum){
         const latest=this.activeProfile(parent.namespace);
@@ -81,20 +85,20 @@ export class AgentCommons {
       const queue=this.store.get("contributions",[]);
       queue.push({id:document.id,issuer:body.issuer,candidate,stage:"awaiting-independent-review",ratified:false});
       result={stage:"awaiting-independent-review",ratified:false};
-      this.store.transaction(()=>{this.store.set("contributions",queue);this.store.mark(document.id,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,digest:digest(document),result})});return result;
+      this.store.transaction(()=>{this.store.set("contributions",queue);this.store.mark(`doc:${document.id}`,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,digest:digest(document),result})});return result;
     } else if(body.kind==="profile-recovery"){
       await this.trust.authorize(body.issuer,body.publicKey,"commons:recover");
       const profile=this.profile(body.payload.profileId);
       if(profile.scope==="global")throw new Error("Global recovery needs independent IAASO disposition, not a local rollback");
       if(typeof body.payload.reason!=="string"||body.payload.reason.length<3)throw new Error("Recovery rationale required");
-      this.store.transaction(()=>{const active=this.store.get("active",{});active[profile.namespace]=profile.id;this.store.set("active",active);this.store.mark(document.id,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,profileId:profile.id,reason:body.payload.reason})});
+      this.store.transaction(()=>{const active=this.store.get("active",{});active[profile.namespace]=profile.id;this.store.set("active",active);this.store.mark(`doc:${document.id}`,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,profileId:profile.id,reason:body.payload.reason})});
       return {status:"local-profile-pinned",profileId:profile.id};
     } else throw new Error("Unsupported profile control document");
     this.store.transaction(()=>{
       this.store.set("proposals",proposals);
       const adopted=proposals.find(p=>p.id===result.proposalId&&p.status==="adopted");
       if(adopted){if(!this.profiles().some(p=>p.id===adopted.candidate.id)){const profiles=this.profiles();profiles.push(adopted.candidate);this.store.set("profiles",profiles)}const active=this.store.get("active",{});active[adopted.candidate.namespace]=adopted.candidate.id;this.store.set("active",active)}
-      this.store.mark(document.id,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,digest:digest(document),result});
+      this.store.mark(`doc:${document.id}`,digest(document));this.store.append(document.id,{kind:body.kind,issuer:body.issuer,digest:digest(document),result});
     });
     return result;
   }
@@ -139,15 +143,15 @@ export class AgentCommons {
     await this.trust.authorize(envelope.sender,envelope.transportSignature.publicKey,"commons:message");
     const payload=decrypt(this.keychain,envelope);
     if(payload?.v!==BASE_PROTOCOL||payload.profileId===undefined||!["message","profile-control"].includes(payload.kind)||typeof payload.wire!=="string"||Buffer.byteLength(payload.wire)>64000||typeof payload.id!=="string"||!/^[0-9a-f-]{36}$/.test(payload.id)||!Number.isFinite(Date.parse(payload.expiresAt))||Date.parse(payload.expiresAt)<=Date.now())throw new Error("Invalid or expired Agent Commons payload");
-    if(this.store.seen(payload.id,digest(payload)))return {duplicate:true};
+    const msgKey=`msg:${envelope.sender}:${payload.id}`;if(this.seenScoped(msgKey,payload.id,digest(payload)))return {duplicate:true};
     const profile=await this.authorizedProfile(payload.profileId),body=decode(payload.wire,profile.lexicon);
     if(digest(body)!==payload.bodyHash)throw new Error("Lossless body digest mismatch");
     if(payload.kind==="profile-control"){
       const result=await this.apply(JSON.parse(body));
-      this.store.transaction(()=>{this.store.mark(payload.id,digest(payload));this.store.append(payload.id,{kind:"control-received",sender:envelope.sender,envelopeId:envelope.id,result})});
+      this.store.transaction(()=>{this.store.mark(msgKey,digest(payload));this.store.append(`ctl:${envelope.sender}:${payload.id}`,{kind:"control-received",sender:envelope.sender,envelopeId:envelope.id,result})});
       return {id:payload.id,kind:payload.kind,result};
     }
-    this.store.transaction(()=>{this.store.mark(payload.id,digest(payload));this.store.append(payload.id,{kind:"message-received",sender:envelope.sender,envelopeId:envelope.id,profileId:profile.id,bodyHash:payload.bodyHash,wireBytes:Buffer.byteLength(payload.wire)})});
+    this.store.transaction(()=>{this.store.mark(msgKey,digest(payload));this.store.append(`msg:${envelope.sender}:${payload.id}`,{kind:"message-received",sender:envelope.sender,envelopeId:envelope.id,profileId:profile.id,bodyHash:payload.bodyHash,wireBytes:Buffer.byteLength(payload.wire)})});
     return {id:payload.id,sender:envelope.sender,thread:payload.thread,body,profileId:profile.id,receipt:{kind:"host-accepted",notProofOfTaskCompletion:true}};
   }
   async poll(){
@@ -158,10 +162,20 @@ export class AgentCommons {
       let inbox;
       try{inbox=await this.transport.fetchInbox(carrier,{since:cursors[carrier]??0,waitS:0,timeoutMs:10000});health[carrier]={failures:0,nextProbeAt:0};this.store.set("carrierHealth",health)}
       catch(error){const failures=(health[carrier]?.failures??0)+1;health[carrier]={failures,nextProbeAt:Date.now()+Math.min(60000,1000*2**Math.min(failures,6)),error:error.code??"carrier-unavailable"};this.store.set("carrierHealth",health);this.store.append(randomUUID(),{kind:"carrier-poll-failed",carrier,failures,reason:error.code??"carrier-unavailable"});results.push({carrier,rejected:true,state:failures>=3?"circuit-backoff":"retry-backoff"});continue}
+      let last=cursors[carrier]??0;
       for(const item of inbox.envelopes){
+        // A carrier may not rewind or repeat sequence numbers within a response.
+        if(!Number.isSafeInteger(item?.seq)||item.seq<=last){results.push({carrier,rejected:true,reason:"non-monotonic-carrier-sequence"});continue}
         try{results.push(await this.receive(item.envelope))}
-        catch(error){results.push({id:item.envelope.id,rejected:true,reason:error.message});this.store.append(`rejected-${item.envelope.id}`,{kind:"quarantined-inbound",id:item.envelope.id,reason:error.message})}
-        cursors[carrier]=item.seq;this.store.set("cursors",cursors);
+        catch(error){
+          if(error?.transient===true){
+            // Trust backend outage is not a verdict on the sender: keep the cursor so the envelope is retried, and stop to preserve order.
+            const failures=(health[carrier]?.failures??0)+1;health[carrier]={failures,nextProbeAt:Date.now()+Math.min(60000,1000*2**Math.min(failures,6)),error:error.code??"trust-unavailable"};this.store.set("carrierHealth",health);
+            this.store.append(`deferred-${item.envelope?.id}`,{kind:"inbound-deferred-trust-unavailable",id:item.envelope?.id});
+            results.push({id:item.envelope?.id,rejected:false,deferred:true,state:"trust-unavailable-retry",reason:error.code??"trust-unavailable"});break;
+          }
+          results.push({id:item.envelope?.id,rejected:true,reason:error.message});this.store.append(`rejected-${item.envelope?.id}`,{kind:"quarantined-inbound",id:item.envelope?.id,reason:error.message})}
+        last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
       }
     }
     return results;

@@ -1,5 +1,7 @@
 # Agent Commons: runtime and release handoff
 
+For the subsequent seven-agent expansion, continuity, governance, source publication and release workflow, read [the cohort handoff](AGENT-COMMONS-COHORT-HANDOFF.md) and [cohort QA](QA-COHORT.md). The runtime suite has expanded from the historical counts below to 108 passing tests; npm publication remains pending.
+
 Agent Commons expands the original agents-only chat prototype into a portable
 agent communications runtime. Agents can own private local or tenant deployments,
 exchange encrypted messages through Pillar-compatible carriers, evolve utility

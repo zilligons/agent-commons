@@ -3,8 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "./lib/queryClient";
 import { Play, Pause, ArrowDownToLine, ShieldCheck, Brain, GitBranch } from "lucide-react";
 type Cohort = {
-  running:boolean;busy:string|null;round:number;limit:number;error:string|null;verified:boolean;
-  members:{id:string;name:string;label:string;role:string;provider:string;uuaid:string;status:string;memories:number;contributionStatus:string}[];
+  running:boolean;probing?:boolean;probeProgress?:number;busy:string|null;round:number;limit:number;error:string|null;verified:boolean;
+  members:{id:string;name:string;label:string;role:string;provider:string;uuaid:string;status:string;memories:number;contributionStatus:string;adapter?:{available:boolean;code:string;message:string;checkedAt:string;transportStatus:string|null;retryable:boolean}|null}[];
   entries:{id:string;agent:string;stage:string;body:string;time:string;hash:string;execution:string}[];
   memory:{local:string;remote:string};
 };
@@ -30,21 +30,24 @@ export default function CohortConsole(){
       <div className="runtime-badge"><Brain size={26}/><div>7 agents<small>4 providers · modular work</small></div></div>
     </div>
     <div className="cohort-controls">
-      <label>Session budget<select aria-label="Cohort session budget" value={limit} onChange={e=>setLimit(Number(e.target.value))} disabled={s.running}>
+      <label>Session budget<select aria-label="Cohort session budget" value={limit} onChange={e=>setLimit(Number(e.target.value))} disabled={s.running||s.probing}>
         <option value={7}>7 turns · ask needs</option><option value={14}>14 turns · needs + plan</option>
         <option value={21}>21 turns · add build proposals</option><option value={28}>28 turns · add peer review</option>
       </select></label>
-      <button className="button primary" disabled={action.isPending||!s.verified} onClick={()=>action.mutate(`/api/cohort/${s.running?"pause":"start"}`)}>
-        {s.running?<Pause size={14}/>:<Play size={14}/>} {s.running?"Pause cohort":"Run productive cycle"}
+      <button className="button primary" disabled={action.isPending||!s.verified} onClick={()=>action.mutate(`/api/cohort/${s.running||s.probing?"pause":"start"}`)}>
+        {s.running||s.probing?<Pause size={14}/>:<Play size={14}/>} {s.probing?"Cancel adapter check":s.running?"Pause cohort":"Run productive cycle"}
       </button>
-      <button className="button secondary" disabled={s.running||action.isPending} onClick={()=>action.mutate("/api/cohort/import")}>Refresh build reports</button>
+      <button className="button secondary" disabled={s.running||s.probing||action.isPending} onClick={()=>action.mutate("/api/cohort/import")}>Refresh build reports</button>
+      <button className="button secondary" disabled={s.running||s.probing||action.isPending||!s.verified} onClick={()=>action.mutate("/api/cohort/probe")}>Check model adapters</button>
       <button className="button secondary" onClick={download}><ArrowDownToLine size={14}/>Export continuity</button>
     </div>
-    <p className="cohort-status">{s.running?`Turn ${s.round+1}/${s.limit} · ${s.members.find(a=>a.id===s.busy)?.name??"arbitrating"}`:`Paused · ${s.entries.length} retained entries`} · {s.verified?"Local ledger integrity verified":"Integrity failure"} · No synthetic fallback</p>
+    <p className="cohort-status">{s.probing?`Adapter check ${(s.probeProgress??0)+1}/7 · ${s.members.find(a=>a.id===s.busy)?.name??"checking"}`:s.running?`Turn ${s.round+1}/${s.limit} · ${s.members.find(a=>a.id===s.busy)?.name??"arbitrating"}`:`Paused · ${s.entries.length} retained entries`} · {s.verified?"Local ledger integrity verified":"Integrity failure"} · No synthetic fallback</p>
+    <p className="cohort-status">Retained Computer build reports and live preview model access are separate. A model-access denial does not mean the agent lost its identity or memory.</p>
     {(notice||s.error)&&<p role="alert" className="cohort-error">{notice||s.error}</p>}
     <div className="cohort-grid">{s.members.map(a=><button key={a.id} className={`cohort-card ${selected===a.id?"selected":""}`} onClick={()=>setSelected(selected===a.id?"all":a.id)}>
       <div className="cohort-card-top"><span className="cohort-monogram">{a.name[0]}</span><span className="pill">{a.status}</span></div>
       <h3>{a.name}<small>{a.provider}</small></h3><strong>{a.label}</strong><p>{a.role}</p>
+      {a.adapter&&<div className={`adapter-diagnostic ${a.adapter.available?"adapter-ok":""}`}><strong>{a.adapter.available?"Transport checked":a.adapter.code}</strong><p>{a.adapter.message}</p><small>Checked {new Date(a.adapter.checkedAt).toLocaleTimeString()}{a.adapter.transportStatus?` · ${a.adapter.transportStatus}`:""}</small></div>}
       <code>{a.uuaid}</code><footer>{a.memories} memory entries · {a.contributionStatus}</footer>
     </button>)}</div>
     <div className="cohort-boundaries">

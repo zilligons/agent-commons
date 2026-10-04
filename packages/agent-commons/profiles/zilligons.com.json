@@ -1,0 +1,11 @@
+{
+  "namespace":"tenant/zilligons.com",
+  "name":"Zilligons fleet communications",
+  "scope":"tenant",
+  "quorum":2,
+  "fixtures":[
+    "Route the build task to the code forge agent and require a signed delivery receipt.",
+    "Require a signed delivery receipt before marking the build task complete.",
+    "The code forge agent returns verifiable provenance with a signed delivery receipt."
+  ]
+}

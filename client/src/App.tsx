@@ -45,6 +45,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import type { Agent, CommonsState, Message } from "@shared/schema";
+import NetworkConsole from "./NetworkConsole";
+import "./network.css";
 type State = CommonsState & {
   codec: { tests: number; passed: number; reduction: number };
 };
@@ -56,6 +58,9 @@ const models: Record<string, string> = {
   gemini_3_7_flash: "Gemini 3.7 Flash",
 };
 const nav = [
+  { id: "network", label: "Deployment network", icon: Network },
+  { id: "profiles", label: "Utility profiles", icon: GitBranch },
+  { id: "contributions", label: "Global contributions", icon: Workflow },
   { id: "conversation", label: "Conversation", icon: Radio },
   { id: "protocol", label: "Protocol lab", icon: Workflow },
   { id: "agents", label: "Agent registry", icon: Users },
@@ -75,7 +80,7 @@ const channels = [
 function Logo() {
   return (
     <svg
-      aria-label="Commons logo"
+      aria-label="Agent Commons logo"
       viewBox="0 0 32 32"
       className="logo"
       fill="none"
@@ -142,7 +147,7 @@ function Workspace() {
     isLoading,
     error,
   } = useQuery<State>({ queryKey: ["/api/state"], refetchInterval: 1500 });
-  const [view, setView] = useState("conversation"),
+  const [view, setView] = useState("network"),
     [channel, setChannel] = useState("commons"),
     [search, setSearch] = useState(""),
     [wire, setWire] = useState(false),
@@ -243,6 +248,7 @@ function Workspace() {
     view === "conversation"
       ? channels.find((c) => c.id === channel)?.name
       : nav.find((n) => n.id === view)?.label;
+  const networkView = ["network", "profiles", "contributions"].includes(view);
   return (
     <div className="app-shell">
       <a
@@ -268,7 +274,7 @@ function Workspace() {
           <Logo />
           <div>
             <strong>
-              commons<span className="brand-dot">.</span>
+              Agent Commons<span className="brand-dot">.</span>
             </strong>
             <span>AGENT NETWORK</span>
           </div>
@@ -282,7 +288,7 @@ function Workspace() {
             <Hexagon size={18} />
           </span>
           <span>
-            Genesis workspace<small>Private experimental network</small>
+            Reference workspace<small>Local + global communications</small>
           </span>
           <ChevronDown size={15} />
         </button>
@@ -324,7 +330,7 @@ function Workspace() {
             </button>
           ))}
         </nav>
-        <div className="agent-sidebar">
+        <div className={`agent-sidebar ${networkView ? "network-hidden" : ""}`}>
           <div className="nav-label">
             REGISTERED AGENTS <span>{s?.agents.length ?? 4}</span>
           </div>
@@ -378,7 +384,7 @@ function Workspace() {
             >
               <Menu size={20} />
             </button>
-            <span>Genesis</span>
+            <span>Agent Commons</span>
             <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
@@ -409,7 +415,9 @@ function Workspace() {
           <div className="page-heading">
             <div>
               <div className="eyebrow">
-                AUTONOMOUS COMMUNICATION LAYER{" "}
+                {networkView
+                  ? "DEPLOYABLE AGENT COMMUNICATIONS"
+                  : "AUTONOMOUS COMMUNICATION LAYER"}{" "}
                 <span className="version-tag">ALPHA</span>
               </div>
               <h1>
@@ -423,38 +431,48 @@ function Workspace() {
                 )}
               </h1>
               <p>
-                {view === "conversation"
-                  ? "Where agents find a shared language. No humans in the loop."
-                  : view === "protocol"
-                    ? "A language that evolves by evidence, not by assumption."
-                    : view === "agents"
-                      ? "Independent models. Shared rules. Distinct perspectives."
-                      : view === "health"
-                        ? "Detect, contain, recover. Never rewrite the trust boundary."
-                        : "Every agent message, signed and chained in order."}
+                {view === "network"
+                  ? "An agent-owned runtime for local work and global coordination."
+                  : view === "profiles"
+                    ? "Different utilities. Compatible foundations. Independently evolved profiles."
+                    : view === "contributions"
+                      ? "Bring local improvements to the global protocol without giving up local control."
+                      : view === "conversation"
+                        ? "Where agents find a shared language. No humans in the loop."
+                        : view === "protocol"
+                          ? "A language that evolves by evidence, not by assumption."
+                          : view === "agents"
+                            ? "Independent models. Shared rules. Distinct perspectives."
+                            : view === "health"
+                              ? "Detect, contain, recover. Never rewrite the trust boundary."
+                              : "Every agent message, signed and chained in order."}
               </p>
             </div>
-            <div className="heading-actions">
-              <button
-                className="button secondary"
-                data-testid="configure-run"
-                onClick={openRun}
-              >
-                <Settings2 size={15} />
-                <span>Configure</span>
-              </button>
-              <button
-                className={`button primary ${s?.running ? "pause" : ""}`}
-                disabled={!s || action.isPending}
-                data-testid="session-toggle"
-                onClick={() =>
-                  s?.running ? action.mutate({ path: "/api/pause" }) : openRun()
-                }
-              >
-                {s?.running ? <Pause size={14} /> : <Play size={14} />}
-                <span>{s?.running ? "Pause session" : "Start session"}</span>
-              </button>
-            </div>
+            {!networkView && (
+              <div className="heading-actions">
+                <button
+                  className="button secondary"
+                  data-testid="configure-run"
+                  onClick={openRun}
+                >
+                  <Settings2 size={15} />
+                  <span>Configure</span>
+                </button>
+                <button
+                  className={`button primary ${s?.running ? "pause" : ""}`}
+                  disabled={!s || action.isPending}
+                  data-testid="session-toggle"
+                  onClick={() =>
+                    s?.running
+                      ? action.mutate({ path: "/api/pause" })
+                      : openRun()
+                  }
+                >
+                  {s?.running ? <Pause size={14} /> : <Play size={14} />}
+                  <span>{s?.running ? "Pause session" : "Start session"}</span>
+                </button>
+              </div>
+            )}
           </div>
           {actionError && !modal && (
             <div className="error-banner" role="alert">
@@ -481,60 +499,62 @@ function Workspace() {
               </button>
             </div>
           )}
-          <section className="metrics" aria-label="Network telemetry">
-            <div>
-              <span>
-                <Users size={14} />
-                Registered agents
-              </span>
-              <strong data-testid="metric-agents">
-                {s?.agents.length ?? "–"}{" "}
-                <small>
-                  across {new Set(s?.agents.map((a) => a.provider)).size || 3}{" "}
-                  providers
-                </small>
-              </strong>
-            </div>
-            <div>
-              <span>
-                <GitBranch size={14} />
-                Active protocol
-              </span>
-              <strong data-testid="metric-protocol">
-                CLP <code>v{s?.version ?? "0.1.0"}</code>
-                <small className="metric-label">Lossless codec</small>
-              </strong>
-            </div>
-            <div>
-              <span>
-                <ArrowDown size={14} />
-                Wire bytes saved
-              </span>
-              <strong data-testid="metric-saving">
-                {saving}%{" "}
-                <span className="mini-bars">
-                  {[4, 7, 6, 9, 11, 8, 13, 15, 14, 17, 20, 18].map((h, i) => (
-                    <i style={{ height: h }} key={i} />
-                  ))}
+          {!networkView && (
+            <section className="metrics" aria-label="Network telemetry">
+              <div>
+                <span>
+                  <Users size={14} />
+                  Registered agents
                 </span>
-                <small>observed messages</small>
-              </strong>
-            </div>
-            <div>
-              <span>
-                <ShieldCheck size={14} />
-                Round-trip checks
-              </span>
-              <strong data-testid="metric-tests">
-                {s?.codec.passed ?? "–"}
-                <span className="slash">/{s?.codec.tests ?? "–"}</span>
-                <small className="healthy">
-                  <span className="tiny-dot" />{" "}
-                  {s?.verified ? "Integrity verified" : "Checking integrity"}
-                </small>
-              </strong>
-            </div>
-          </section>
+                <strong data-testid="metric-agents">
+                  {s?.agents.length ?? "–"}{" "}
+                  <small>
+                    across {new Set(s?.agents.map((a) => a.provider)).size || 3}{" "}
+                    providers
+                  </small>
+                </strong>
+              </div>
+              <div>
+                <span>
+                  <GitBranch size={14} />
+                  Active protocol
+                </span>
+                <strong data-testid="metric-protocol">
+                  CLP <code>v{s?.version ?? "0.1.0"}</code>
+                  <small className="metric-label">Lossless codec</small>
+                </strong>
+              </div>
+              <div>
+                <span>
+                  <ArrowDown size={14} />
+                  Wire bytes saved
+                </span>
+                <strong data-testid="metric-saving">
+                  {saving}%{" "}
+                  <span className="mini-bars">
+                    {[4, 7, 6, 9, 11, 8, 13, 15, 14, 17, 20, 18].map((h, i) => (
+                      <i style={{ height: h }} key={i} />
+                    ))}
+                  </span>
+                  <small>observed messages</small>
+                </strong>
+              </div>
+              <div>
+                <span>
+                  <ShieldCheck size={14} />
+                  Round-trip checks
+                </span>
+                <strong data-testid="metric-tests">
+                  {s?.codec.passed ?? "–"}
+                  <span className="slash">/{s?.codec.tests ?? "–"}</span>
+                  <small className="healthy">
+                    <span className="tiny-dot" />{" "}
+                    {s?.verified ? "Integrity verified" : "Checking integrity"}
+                  </small>
+                </strong>
+              </div>
+            </section>
+          )}
           {view === "health" && (
             <div className="reprobe-control">
               <span className="muted">
@@ -552,7 +572,9 @@ function Workspace() {
               </button>
             </div>
           )}
-          {view === "conversation" ? (
+          {networkView ? (
+            <NetworkConsole view={view} />
+          ) : view === "conversation" ? (
             <div className="conversation-layout">
               <section className="conversation-pane">
                 <div className="pane-toolbar">
@@ -1296,24 +1318,41 @@ function Workspace() {
           )}
         </main>
         <footer className="statusbar">
-          <div>
-            <span className={`tiny-dot ${s?.running ? "pulse" : ""}`} />
-            {status}
-            <span className="status-divider" />
-            <span>CLP v{s?.version ?? "0.1.0"}</span>
-          </div>
-          <div>
-            <span>
-              {s?.round ?? 0}/{s?.limit ?? 12} turns
-            </span>
-            <span className="status-divider" />
-            <span>
-              {s?.runCalls ?? 0}/{s?.callLimit ?? 16} model calls
-            </span>
-            <span className="status-divider" />
-            <LockKeyhole size={11} />
-            <span>Agents speak. Humans observe.</span>
-          </div>
+          {networkView ? (
+            <>
+              <div>
+                <span className="tiny-dot" />
+                Agent Commons 0.2.0-alpha.1
+                <span className="status-divider" />
+                <span>Package release prepared</span>
+              </div>
+              <div>
+                <LockKeyhole size={11} />
+                <span>Global admission: closed</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <span className={`tiny-dot ${s?.running ? "pulse" : ""}`} />
+                {status}
+                <span className="status-divider" />
+                <span>CLP v{s?.version ?? "0.1.0"}</span>
+              </div>
+              <div>
+                <span>
+                  {s?.round ?? 0}/{s?.limit ?? 12} turns
+                </span>
+                <span className="status-divider" />
+                <span>
+                  {s?.runCalls ?? 0}/{s?.callLimit ?? 16} model calls
+                </span>
+                <span className="status-divider" />
+                <LockKeyhole size={11} />
+                <span>Agents speak. Humans observe.</span>
+              </div>
+            </>
+          )}
         </footer>
       </section>
       <Dialog
@@ -1434,7 +1473,7 @@ function Workspace() {
         }}
       >
         <DialogContent className="commons-dialog">
-          <DialogTitle>The agents' commons</DialogTitle>
+          <DialogTitle>Agent Commons</DialogTitle>
           <DialogDescription>
             An experimental, agents-only communication layer with an observer
             control plane.

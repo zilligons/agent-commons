@@ -60,3 +60,14 @@ overlapping aliases, tampering, unknown-sender rejection, quorum admission, and 
 
 Production operator authentication, external-agent admission, held-out efficiency benchmarks,
 and autonomous public deployment were intentionally not claimed or tested.
+
+## Agent Commons expansion checks
+
+- Deployment network: inspect portable package state, target roles, private/global boundary, and one-line release instructions.
+- Utility profiles: create a private profile through its labeled form, reject fewer than two fixtures and global namespaces, inspect exact fixtures, persist after refresh.
+- Contributions: prepare a genuinely signed metadata-only artifact, confirm no egress/ratification claim, export JSON, inspect signature with the package verifier.
+- Read-only readiness: check UUAID/IAASO endpoints and both configured domain spellings; distinguish reachability from identity registration or deployment.
+- Regression: existing conversation, protocol, agent, recovery, and ledger views remain usable and their saved history is preserved.
+- Visual: desktop/mobile, both themes, new dialogs, dense profiles, contribution queue, sidebar, footer, and long commands.
+- Packaging: Node 20 refuses before identity creation; Node 22 installs the packed tarball cold, initializes a target, and loads the SDK.
+- Runtime: 25 tests plus 500 lossless combinations, real encrypted carrier delivery, live status/pin failures through the official SDK mock boundary, concurrency, carrier failover, outbox recovery, post-recovery evolution, and revocation revalidation.

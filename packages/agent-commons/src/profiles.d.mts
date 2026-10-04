@@ -1,0 +1,12 @@
+import type { Profile, Keychain } from "./index.d.ts";
+export function createProfile(options:{namespace:string;name:string;fixtures:string[];scope?:"local"|"tenant"|"global";lexicon?:Record<string,string>;parent?:string|null;revision?:number;quorum?:number}):Profile;
+export function verifyProfile(profile:Profile):Profile;
+export function proposeAlias(profile:Profile,phrase:string):any;
+export function contribution(profile:Profile,options?:{includeFixtures?:boolean}):any;
+export function signDocument(keychain:Keychain,kind:string,payload:any):any;
+export function digest(value:any):string;
+export function benchmark(lexicon:Record<string,string>,fixtures:string[]):Profile["benchmark"];
+export function encode(text:string,lexicon:Record<string,string>):string;
+export function decode(text:string,lexicon:Record<string,string>):string;
+export function verifyDocument(document:any):any;
+export const BASE_PROTOCOL:"agent-commons/1";

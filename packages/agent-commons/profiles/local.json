@@ -1,0 +1,11 @@
+{
+  "namespace":"local/fleet",
+  "name":"Local fleet utility",
+  "scope":"local",
+  "quorum":2,
+  "fixtures":[
+    "Run the local validation suite before accepting a communication profile.",
+    "A communication profile must pass the local validation suite before adoption.",
+    "The local validation suite checks every communication profile without changing identity policy."
+  ]
+}

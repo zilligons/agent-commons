@@ -1,0 +1,9 @@
+{
+  "mode":"global",
+  "registryUrl":"https://api.uuaid.org",
+  "authorityUrl":"https://authority.iaaso.org",
+  "standardPins":{},
+  "agents":{},
+  "blocked":[],
+  "_instructions":"Empty pins and admissions intentionally deny every global agent. Populate reviewed IAASO digests, real credential IDs, and exact subject/key/capability bindings. Do not treat this file as a ready global grant."
+}

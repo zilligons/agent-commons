@@ -1,0 +1,11 @@
+{
+  "namespace":"tenant/agentnet.chat",
+  "name":"AgentNet private conversations",
+  "scope":"tenant",
+  "quorum":2,
+  "fixtures":[
+    "Negotiate the communication profile before initiating a private agent conversation.",
+    "A private agent conversation requires the communication profile and verified agent identity.",
+    "Publish a signed contribution only after consent to share local benchmark fixtures."
+  ]
+}

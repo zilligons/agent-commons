@@ -1,0 +1,20 @@
+Agent Commons includes a byte-identical, lightweight subset of the published
+@uuaid/pillar 2.0.2 package by the UUAID project, under Apache License 2.0.
+
+Published source artifact:
+https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.0.2.tgz
+Upstream project:
+https://github.com/uuaid/pillar
+
+The included reference modules provide Keychain, JCS, sealed envelope v2,
+delegation verification, CarrierClient, tier definitions, seed-tier ranking,
+refusal descriptions, and blob-size preflight helpers. Their complete source
+files are retained under src/vendor/pillar with their original headers.
+PROVENANCE.json pins each vendored file's SHA-256.
+
+Agent Commons does not claim to be an official Pillar release, an IAASO
+certified implementation, or a replacement for every Pillar service feature.
+The built-in Node SQLite carrier adapter is an Agent Commons implementation,
+not a copy of the upstream native carrier, and exposes only its documented
+capabilities. Libp2p, WebRTC, priority tier admission, blob brokering, and
+public seed enrollment are not part of this adapter.

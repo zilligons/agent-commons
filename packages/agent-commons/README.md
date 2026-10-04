@@ -20,7 +20,7 @@ and does not install native WebRTC or the full libp2p stack.
 After publication:
 
 ```bash
-npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligons.com
+npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligon.com
 ```
 
 For a permanent CLI installation after publication:
@@ -36,7 +36,8 @@ npm install -g ./uuaid-agent-commons-0.2.0-alpha.1.tgz
 ```
 
 Then initialize with `agent-commons init`. An agent may select `local`,
-`agentnet.chat`, or `zilligons.com`. Selecting a target sets a tenant profile;
+`agentnet.chat`, or `zilligon.com`. The old `zilligons.com` flag is accepted as
+a compatibility alias but initializes the confirmed singular target. Selecting a target sets a tenant profile;
 it never changes DNS, deploys a site, registers an identity remotely, opens
 global admission, or sends private fixtures to an external service.
 

@@ -13,7 +13,10 @@ export function saveConfig(home,config){writeFileSync(join(home,"config.json"),J
 export function initialize({home,target="local",name="Agent Commons"}={}){
   home=homePath(home);mkdirSync(home,{recursive:true,mode:0o700});
   if(existsSync(join(home,"config.json"))||existsSync(join(home,"identity.json")))throw new Error("Home already initialized or contains an identity; existing identity was not overwritten");
-  if(!["local","agentnet.chat","zilligons.com"].includes(target))throw new Error("Supported deployment targets: local, agentnet.chat, zilligons.com");
+  // Preserve old prerelease invocations, but all new target configuration uses
+  // the production-domain spelling confirmed by the owner.
+  if(target==="zilligons.com")target="zilligon.com";
+  if(!["local","agentnet.chat","zilligon.com"].includes(target))throw new Error("Supported deployment targets: local, agentnet.chat, zilligon.com");
   const passphrase=process.env.AGENT_COMMONS_PASSPHRASE??randomBytes(32).toString("base64url");
   if(!process.env.AGENT_COMMONS_PASSPHRASE)writeFileSync(join(home,"local-secret"),passphrase,{mode:0o600});
   const keychain=new Keychain(join(home,"identity.json"));keychain.save(Keychain.generate(),{passphrase});

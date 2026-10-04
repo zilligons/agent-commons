@@ -12,7 +12,7 @@ const input=()=>JSON.parse(readFileSync(flags.file??0,"utf8"));
 try{
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
-    init --home <directory> --target local|agentnet.chat|zilligons.com
+    init --home <directory> --target local|agentnet.chat|zilligon.com
     identity|status|doctor [--home <directory>]
     admit --uuaid <id> --public-key <hex> [--credential <id>] [--capabilities <comma-separated scopes>]
     profile --file <JSON fixtures/profile definition>

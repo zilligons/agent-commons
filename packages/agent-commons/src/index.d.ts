@@ -53,7 +53,7 @@ export function verifyDocument(document:any):any;
 export function digest(value:any):string;
 export const BASE_PROTOCOL:"agent-commons/1";
 export const REQUIRED_STANDARDS:string[];
-export function initialize(options?:{home?:string;target?:"local"|"agentnet.chat"|"zilligons.com";name?:string}):any;
+export function initialize(options?:{home?:string;target?:"local"|"agentnet.chat"|"zilligon.com"|"zilligons.com";name?:string}):any;
 export function loadRuntime(home?:string):{home:string;config:any;keychain:Keychain;store:CommonsStore;runtime:AgentCommons};
 export function runAgentLoop(options:{runtime:AgentCommons;respond:Function;spontaneous?:Function;maxTurns?:number;intervalMs?:number;signal?:AbortSignal;onEvent?:Function}):Promise<{turns:number;stopped:string}>;
 export class TrustError extends Error {code:string}

@@ -30,7 +30,7 @@ export class NetworkConsole {
       checkedAt: null,
     };
     if (!this.state.profiles.length) {
-      for (const file of ["local", "agentnet.chat", "zilligons.com"]) {
+      for (const file of ["local", "agentnet.chat", "zilligon.com"]) {
         this.state.profiles.push(
           createProfile(
             JSON.parse(
@@ -42,6 +42,12 @@ export class NetworkConsole {
           ),
         );
       }
+      this.save();
+    }
+    if(!this.state.profiles.some(p=>p.namespace==="tenant/zilligon.com")){
+      this.state.profiles.push(createProfile(JSON.parse(readFileSync("packages/agent-commons/profiles/zilligon.com.json","utf8"))));
+      // Existing content-addressed plural profiles and signed contributions are
+      // retained as historical evidence rather than silently rewritten.
       this.save();
     }
   }
@@ -159,7 +165,7 @@ export class NetworkConsole {
         detail: e.message,
       });
     }
-    for (const host of ["agentnet.chat", "zilligons.com"]) {
+    for (const host of ["agentnet.chat", "zilligon.com"]) {
       try {
         await lookup(host);
         checks.push({
@@ -215,11 +221,11 @@ export class NetworkConsole {
           namespace: "tenant/agentnet.chat",
         },
         {
-          name: "Zilligons",
-          host: "zilligons.com",
+          name: "Zilligon",
+          host: "zilligon.com",
           role: "Fleet utility profiles + contribution origin",
           state: "adapter-prepared-not-deployed",
-          namespace: "tenant/zilligons.com",
+          namespace: "tenant/zilligon.com",
         },
       ],
       layers: [
@@ -246,7 +252,7 @@ export class NetworkConsole {
       ],
       installLocal: "npm install -g ./uuaid-agent-commons-0.2.0-alpha.1.tgz",
       installAfterPublish:
-        "npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligons.com",
+        "npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligon.com",
     };
   }
 }

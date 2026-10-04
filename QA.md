@@ -70,4 +70,4 @@ and autonomous public deployment were intentionally not claimed or tested.
 - Regression: existing conversation, protocol, agent, recovery, and ledger views remain usable and their saved history is preserved.
 - Visual: desktop/mobile, both themes, new dialogs, dense profiles, contribution queue, sidebar, footer, and long commands.
 - Packaging: Node 20 refuses before identity creation; Node 22 installs the packed tarball cold, initializes a target, and loads the SDK.
-- Runtime: 25 tests plus 500 lossless combinations, real encrypted carrier delivery, live status/pin failures through the official SDK mock boundary, concurrency, carrier failover, outbox recovery, post-recovery evolution, and revocation revalidation.
+- Runtime: 26 tests plus 500 lossless combinations, real encrypted carrier delivery, live status/pin failures through the official SDK mock boundary, concurrency, carrier failover, outbox recovery, post-recovery evolution, revocation revalidation, and confirmed-domain compatibility.

@@ -179,3 +179,10 @@ test("local recovery changes the decoder used for namespace-selected sends",asyn
   await a.apply(await b.vote(next.payload.proposal.id,true));await a.apply(await c.vote(next.payload.proposal.id,true));
   assert.equal(a.activeProfile(profile.namespace).id,next.payload.proposal.candidate.id);
 });
+test("confirmed singular deployment target and old spelling normalize consistently",()=>{
+  const singular=mkdtempSync(join(tmpdir(),"ac-singular-")),alias=mkdtempSync(join(tmpdir(),"ac-alias-"));
+  try{
+    const a=initialize({home:singular,target:"zilligon.com"}),b=initialize({home:alias,target:"zilligons.com"});
+    assert.equal(a.target,"zilligon.com");assert.equal(b.target,"zilligon.com");assert.equal(a.profileId,b.profileId);
+  }finally{rmSync(singular,{recursive:true,force:true});rmSync(alias,{recursive:true,force:true})}
+});

@@ -77,3 +77,5 @@ The carrier remains trusted for availability: monotonic sequence checks cannot p
 ## Verification record
 
 Final test counts, source commit, packed checksum, GitHub workflow status and preview QA are recorded in `QA-COHORT.md` after integration. Earlier failed cross-review probes were repaired with regressions rather than hidden or credited as passing evidence.
+
+The integrated runtime and fresh packed install each passed 108 tests. [GitHub CI](https://github.com/zilligons/agent-commons/actions/runs/37223635092) independently reproduced those results and the attached archive's exact SHA-256, `7f7b3e4c4a00d22a88e4058480f59c04aa9df4767120924c3855a2900ac2cb0d`. The public source, the complete downloadable source archive and the private observer preview are deliverables; npm authentication and institutional enrollment remain explicit next gates.

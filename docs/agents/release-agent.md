@@ -23,7 +23,7 @@ These are ranked options for the host. They are not feelings, wants, sentience, 
 
 ## Operational needs
 
-- Public `main` on [zilligons/agent-commons](https://github.com/zilligons/agent-commons), with this workflow tree pushed by a human after final tests. This report does not push.
+- Public `main` on [zilligons/agent-commons](https://github.com/zilligons/agent-commons), with this workflow tree pushed by an authorized maintainer after final tests. The parent coordinator has now pushed the source and confirmed packed-install CI; this worker report itself does not confer publishing authority.
 - `package.json` repository URL exactly `git+https://github.com/zilligons/agent-commons.git` and directory `packages/agent-commons`. Local main already has that. Do not rewrite it here.
 - Annotated, ruleset-immutable tag `vX.Y.Z-alpha.N` matching `package.json`. Dispatch from `refs/heads/main` only.
 - GitHub environment `npm-alpha` with required reviewers, created before any checked dispatch.

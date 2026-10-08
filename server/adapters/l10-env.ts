@@ -320,6 +320,14 @@ export function assertSpawnTripwire(env: NodeJS.ProcessEnv = process.env, surfac
  * AGENT_COMMONS_PRIVATE_PREVIEW, AGENT_COMMONS_PREVIEW_ORIGINS,
  * AGENT_COMMONS_BIND_ALL). Values come from the caller, never from
  * unvalidated parent overrides.
+ *
+ * The L10 route names (L10_BIN_ENV_NAMES in config.ts: the Claude, Codex
+ * and Grok binaries, the model ledger and the witness seats) are listed
+ * here so server/index.ts keeps them when it rebuilds process.env.
+ * Without them the resolver always reads "unset" and the console can
+ * never enable a live route. They stay OFF L10_APP_CONTROL_ALLOWLIST, so
+ * a .env line cannot set them: process env only. They reach the console
+ * process only; CLI children get buildChildEnv's own env.
  */
 export const CLOSED_CONSOLE_ALLOWLIST = Object.freeze([
   "HOME", "PATH", "USER", "TERM", "LANG", "TMPDIR", "TZ",
@@ -328,6 +336,8 @@ export const CLOSED_CONSOLE_ALLOWLIST = Object.freeze([
   "AGENT_COMMONS_STUB_FIXTURES", "AGENT_COMMONS_PRIVATE_PREVIEW",
   "AGENT_COMMONS_PREVIEW_ORIGINS", "AGENT_COMMONS_BIND_ALL",
   "AGENT_COMMONS_L10_TRIAL_TURNS",
+  "AGENT_COMMONS_CLAUDE_BIN", "AGENT_COMMONS_CODEX_BIN", "AGENT_COMMONS_GROK_BIN",
+  "AGENT_COMMONS_MODEL_LEDGER", "AGENT_COMMONS_WITNESS_SEATS",
 ] as const);
 
 /**

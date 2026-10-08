@@ -6,14 +6,14 @@
  * 1. Adjusted import paths: Keychain and helpers from ../src/vendor/pillar/identity/keychain.mjs,
  *    envelope methods from ../src/vendor/pillar/net/envelope.mjs, and vectors fixture from ./fixtures/ed25519-small-order.vectors.json.
  * 2. In withMutant(), placed temporary mutant trees under os.tmpdir() using mkdtempSync rather than next to test/ or src/.
- * 3. Symlinked packages/agent-commons/node_modules into the temporary directory so @noble/curves resolves in ESM.
+ * 3. Symlinked the nearest ancestor node_modules containing @noble/curves into the temporary directory so @noble/curves resolves in ESM.
  * 4. Cleaned up temporary mutant directories in withMutant() finally block.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, cpSync, rmSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { Keychain, isStrictEd25519PublicKey, localIdFromKey } from "../src/vendor/pillar/identity/keychain.mjs";
@@ -75,13 +75,19 @@ let mutantN = 0;
 /**
  * Load copies of keychain.mjs and envelope.mjs with the named rule lines
  * dropped. The copies live in a temporary mirror in os.tmpdir() (never inside
- * src/ or test/, which other tests walk in parallel), with node_modules symlinked.
+ * src/ or test/, which other tests walk in parallel), with the nearest ancestor
+ * node_modules containing @noble/curves symlinked.
  */
 async function withMutant({ keychain = [], envelope = [] }, fn) {
   const tmpBase = mkdtempSync(join(tmpdir(), `ac-mutant-${process.pid}-${mutantN++}-`));
   const src = join(tmpBase, "pillar");
   cpSync(fileURLToPath(SRC), src, { recursive: true });
-  const pkgNodeModules = fileURLToPath(new URL("../node_modules", import.meta.url));
+  let pkgNodeModules = fileURLToPath(import.meta.resolve("@noble/curves/ed25519.js"));
+  while (pkgNodeModules && basename(pkgNodeModules) !== "node_modules") {
+    const parent = dirname(pkgNodeModules);
+    if (parent === pkgNodeModules) break;
+    pkgNodeModules = parent;
+  }
   symlinkSync(pkgNodeModules, join(tmpBase, "node_modules"), "dir");
   try {
     const kPath = join(src, "identity/keychain.mjs");

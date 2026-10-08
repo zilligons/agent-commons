@@ -1,7 +1,15 @@
 import { createHash, sign, verify, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Agent, CommonsState, Message, Proposal } from "@shared/schema";
 import { storage } from "./storage";
+import { AdapterFailure } from "./adapters";
+import { buildChildEnv, assertSpawnTripwire } from "./adapters/l10-env";
+import { PYTHON_ABS } from "./adapters/l10-process";
+import { isBlockedSlotOrModel } from "./adapters/l10-routes";
+import { assertLiveAccountingGate } from "./adapters/l10-limits";
 
 const roster = [
   {
@@ -88,19 +96,68 @@ export function evaluate(lexicon: Record<string, string>) {
 function canonical(m: Omit<Message, "hash" | "signature">) {
   return JSON.stringify(m);
 }
-function modelCall(
+export function modelCall(
   agent: Agent,
   prompt: string,
   candidates: string[],
   proposalId: string | null,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("python", ["server/model_bridge.py"], {
+    // R3: direct legacy entry must enforce eligibility policy before transport selection or spawn.
+    if (isBlockedSlotOrModel(agent.id) || isBlockedSlotOrModel(agent.model)) {
+      reject(new AdapterFailure(
+        "MODEL_UNAVAILABLE",
+        `slot or model ${agent.id || agent.model} is blocked; L10 does not dispatch it (zero-dispatch gate)`,
+        null,
+        false,
+      ));
+      return;
+    }
+    // R3 (rework 3): engine model bridge is a live path; offline blocks it.
+    if (process.env.AGENT_COMMONS_OFFLINE === "1") {
+      reject(new Error("MODEL_UNAVAILABLE: engine model bridge is a live path; AGENT_COMMONS_OFFLINE=1 blocks it"));
+      return;
+    }
+    // R8 (rework 6): non-bypassable accounting deferral gate at engine entry
+    try {
+      assertLiveAccountingGate();
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    // L10 seam delta: closed child env (v3 §b/§c). The model_bridge.py
+    // Python child receives only the allowlisted env, regardless of what
+    // the parent process holds.
+    // B2 (rework 1): frozen absolute interpreter path; fail closed on
+    // unresolved (the closed child PATH contains no `python`).
+    if (!PYTHON_ABS) {
+      reject(new Error("MODEL_UNAVAILABLE: python interpreter not resolvable to an absolute path"));
+      return;
+    }
+    // D2 (rework 2) + R1 (rework 3): tripwire on parent + constructed child.
+    assertSpawnTripwire();
+    const runId = `engine-${randomUUID().slice(0, 8)}`;
+    const runDir = join(tmpdir(), `agentc-l10-${runId}`);
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    const cleanupRunDir = () => {
+      try { rmSync(runDir, { recursive: true, force: true }); } catch {}
+    };
+    const childEnv = buildChildEnv({
+      route: "claude",
+      runId,
+      home: "/tmp/l10-engine-home",
+      runDir,
+    });
+    assertSpawnTripwire({ ...(childEnv as Record<string, string>) }, "child");
+    const child = spawn(PYTHON_ABS, ["server/model_bridge.py"], {
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...childEnv },
+      detached: true,
     });
     let out = "",
       err = "";
     const timeout = setTimeout(() => {
+      cleanupRunDir();
       child.kill("SIGKILL");
       reject(new Error("Model response timed out after 55 seconds"));
     }, 55000);
@@ -108,10 +165,12 @@ function modelCall(
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => {
       clearTimeout(timeout);
+      cleanupRunDir();
       reject(e);
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
+      cleanupRunDir();
       if (code !== 0)
         reject(
           new Error(

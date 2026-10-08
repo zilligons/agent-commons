@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { Keychain, seal, open, decrypt, envelopeSha, CarrierClient } from "./pillar.mjs";
+import { Keychain, seal, open, decrypt, envelopeSha, CarrierClient, jcs } from "./pillar.mjs";
 import { CommonsStore } from "./store.mjs";
 import { RegistryTrust } from "./trust.mjs";
 import { BASE_PROTOCOL, createProfile, verifyProfile, proposeAlias, encode, decode, digest, signDocument, verifyDocument, contribution } from "./profiles.mjs";
+// L3 Slice 2 v6 §2.1: Pluggable transport and channel/tenant admission
+import { PillarCarrierTransport } from "./transport.mjs";
+import { classifyThread, assertChannelSendAdmission, assertChannelReceiveAdmission, validateTenantBinding } from "./channels.mjs";
 
 export class AgentCommons {
-  constructor({keychain,store=new CommonsStore(),policy={mode:"local",agents:{}},carriers=[],trust}={}){
+  // L3 Slice 2 v6 §2.1: options.transport and channel/tenant policy flags
+  constructor({keychain,store=new CommonsStore(),policy={mode:"local",agents:{}},carriers=[],transport,trust}={}){
     if(!keychain?._identity)throw new Error("A loaded Pillar keychain is required");
     this.keychain=keychain;this.store=store;this.policy=policy;this.trust=trust??new RegistryTrust({policy});this.carriers=carriers;
     for(const carrier of carriers){const url=new URL(carrier);if(policy.mode==="global"&&url.protocol!=="https:")throw new Error("Global carrier URLs must use HTTPS");if(url.username||url.password||url.search||url.hash)throw new Error("Carrier URLs must not embed credentials, queries, or fragments")}
     if(!store.verify())throw new Error("Audit integrity failure: runtime is fail-closed");
-    this.transport=carriers.length?new CarrierClient({keychain,carriers}):null;
+    this.transport=transport??(carriers.length?new PillarCarrierTransport({keychain,carriers}):null);
+    this.channelsEnabled=policy?.channelsEnabled===true;
     this._applyTail=Promise.resolve();this._receiveTail=Promise.resolve();this._flushTail=Promise.resolve();
   }
   get uuaid(){return this.keychain._identity.uuaid}
@@ -106,16 +111,30 @@ export class AgentCommons {
     await this.trust.authorize(this.uuaid,this.publicKey,"commons:contribute");
     return signDocument(this.keychain,"profile-contribution",{contribution:contribution(this.profile(profileId),options)});
   }
+  // L3 Slice 2 v6 §2.1 / §4.2, §4.2.3, §5.2: channel/tenant admission, atomic authenticated admission record
   async send({recipient,profileId,namespace,body,thread="commons",kind="message",deferFlush=false}){
     if(typeof body!=="string"||Buffer.byteLength(body)>32000||typeof thread!=="string"||thread.length>120||!["message","profile-control"].includes(kind))throw new Error("Invalid bounded message");
+    const classified=classifyThread(thread,this.policy);
+    if(classified.ok!==true)throw new Error(classified.error);
+    if(classified.classification==="structured"){
+      assertChannelSendAdmission(classified.channelUri,this.uuaid,[recipient],this.policy);
+    }
     const recipientKey=this.policy.agents?.[recipient]?.publicKey;
     await this.trust.authorize(this.uuaid,this.publicKey,"commons:message");
     await this.trust.authorize(recipient,recipientKey,"commons:message");
     if(!profileId)profileId=this.activeProfile(namespace).id;
     const profile=await this.authorizedProfile(profileId);
+    validateTenantBinding(this.uuaid,recipient,profile,this.policy);
     const payload={v:BASE_PROTOCOL,id:randomUUID(),kind,thread,profileId:profile.id,wire:encode(body,profile.lexicon),bodyHash:digest(body),expiresAt:new Date(Date.now()+3600000).toISOString()};
     const envelope=seal(this.keychain,{recipient,recipientPublicKey:recipientKey,kind:BASE_PROTOCOL,payload});
-    this.store.queue(envelope,profile.id);
+    const tuple={id:envelope.id,sha:envelopeSha(envelope),thread,profileId:profile.id,sender:this.uuaid,recipient};
+    const signature=this.keychain.sign(Buffer.from(jcs(tuple))).toString("hex");
+    const meta={...tuple,signature};
+    this.store.transaction(()=>{
+      this.store.queue(envelope,profile.id);
+      this.store.set(`outbox_meta:${envelope.id}`,meta);
+      this.store.append(`admission-${envelope.id}`,{kind:"outbox-admission",id:envelope.id,sha:meta.sha,thread,profileId:profile.id,sender:this.uuaid,recipient,signature});
+    });
     if(!this.transport||deferFlush)return {envelope,state:"pending",reason:deferFlush?"Queued for bounded batch delivery":"No configured carrier"};
     const result=await this.flush();return {envelope,result};
   }
@@ -127,16 +146,53 @@ export class AgentCommons {
     return {queued:queued.map(x=>({recipient:x.envelope.recipient,id:x.envelope.id})),deliveries:await this.flush(),groupPrivacy:"individually-sealed-recipient-copies"};
   }
   flush(){const next=this._flushTail.then(()=>this.flushInternal());this._flushTail=next.catch(()=>{});return next}
+  // L3 Slice 2 v6 §2.1 / §3.1, §4.2, §4.2.3, §5.2: pre-delivery rechecks, signature verification, and delivery
   async flushInternal(){
     if(!this.transport)return [];
     const results=[];
-    for(const row of this.store.pending()){
-      try{const envelope=JSON.parse(row.body);if(!open(envelope).ok||envelope.sender!==this.uuaid||envelope.id!==row.id)throw new Error("Outbox integrity or sender mismatch");if(row.profile_id)await this.authorizedProfile(row.profile_id);await this.trust.authorize(this.uuaid,this.publicKey,"commons:message");await this.trust.authorize(envelope.recipient,this.policy.agents?.[envelope.recipient]?.publicKey,"commons:message");const receipt=await this.transport.deliver(envelope,{timeoutMs:10000});this.store.delivered(row.id);this.store.append(`outbox-${row.id}`,{kind:"carrier-accepted",id:row.id,sha:envelopeSha(envelope),carrier:receipt.carrier});results.push({id:row.id,state:"carrier-accepted",receipt})}
-      catch(error){this.store.failure(row.id,error.message);results.push({id:row.id,state:"retry-or-quarantine",error:error.code??error.message})}
+    for(let pageIndex=0;pageIndex<20;pageIndex++){
+      const page=this.store.pending();
+      if(!page.length)break;
+      let deliveredInPass=0;
+      for(const row of page){
+        try{
+          const envelope=JSON.parse(row.body);
+          if(!open(envelope).ok||envelope.sender!==this.uuaid||envelope.id!==row.id)throw new Error("Outbox integrity or sender mismatch");
+          const meta=this.store.get(`outbox_meta:${row.id}`);
+          if(!meta||meta.id!==row.id||meta.sha!==envelopeSha(envelope)||meta.profileId!==row.profile_id||meta.sender!==envelope.sender||meta.recipient!==envelope.recipient||typeof meta.thread!=="string"){
+            throw new Error("INVALID_OUTBOX_METADATA");
+          }
+          const signedTuple={id:row.id,sha:meta.sha,thread:meta.thread,profileId:meta.profileId,sender:meta.sender,recipient:meta.recipient};
+          const okSig=Keychain.verifyDetached(this.publicKey,Buffer.from(jcs(signedTuple)),Buffer.from(meta.signature,"hex"));
+          if(!okSig)throw new Error("INVALID_OUTBOX_METADATA");
+          const classified=classifyThread(meta.thread,this.policy);
+          if(classified.ok!==true)throw new Error(classified.error);
+          if(classified.classification==="structured"){
+            assertChannelSendAdmission(classified.channelUri,envelope.sender,[envelope.recipient],this.policy);
+          }
+          const profile=meta.profileId?await this.authorizedProfile(meta.profileId):(row.profile_id?await this.authorizedProfile(row.profile_id):null);
+          validateTenantBinding(envelope.sender,envelope.recipient,profile,this.policy);
+          await this.trust.authorize(this.uuaid,this.publicKey,"commons:message");
+          await this.trust.authorize(envelope.recipient,this.policy.agents?.[envelope.recipient]?.publicKey,"commons:message");
+          const receipt=await this.transport.deliver(envelope,{timeoutMs:10000});
+          if(receipt?.accepted!==true)throw new Error("Carrier rejected envelope");
+          this.store.delivered(row.id);
+          this.store.set(`outbox_meta:${row.id}`,null);
+          this.store.append(`outbox-${row.id}`,{kind:"carrier-accepted",id:row.id,sha:envelopeSha(envelope),carrier:receipt.carrier});
+          results.push({id:row.id,state:"carrier-accepted",receipt});
+          deliveredInPass++;
+        }
+        catch(error){
+          this.store.failure(row.id,error.message);
+          results.push({id:row.id,state:"retry-or-quarantine",error:error.code??error.message});
+        }
+      }
+      if(deliveredInPass===0)break;
     }
     return results;
   }
   receive(envelope){const next=this._receiveTail.then(()=>this.receiveInternal(envelope));this._receiveTail=next.catch(()=>{});return next}
+  // L3 Slice 2 v6 §2.1 / §4.2, §4.2.3, §5.2: inbound channel and tenant admission
   async receiveInternal(envelope){
     const valid=open(envelope);if(!valid.ok)throw new Error(`Invalid Pillar envelope: ${valid.reason}`);
     if(envelope.delegation!==undefined)throw new Error("Delegated host admission requires a configured principal-status adapter; not yet enabled");
@@ -146,18 +202,99 @@ export class AgentCommons {
     const msgKey=`msg:${envelope.sender}:${payload.id}`;if(this.seenScoped(msgKey,payload.id,digest(payload)))return {duplicate:true};
     const profile=await this.authorizedProfile(payload.profileId),body=decode(payload.wire,profile.lexicon);
     if(digest(body)!==payload.bodyHash)throw new Error("Lossless body digest mismatch");
+    const classified=classifyThread(payload.thread,this.policy);
+    if(classified.ok!==true)throw new Error(classified.error);
+    if(classified.classification==="structured"){
+      try{
+        assertChannelReceiveAdmission(classified.channelUri,envelope.sender,this.uuaid,this.policy);
+      }catch(err){
+        if(this.policy.holdBeforeAdmission!==true)throw err;
+        if(err.code!=="UNAUTHORIZED_CHANNEL_SENDER"&&err.code!=="UNAUTHORIZED_CHANNEL_RECEIVER")throw err;
+        if(payload.kind!=="message")throw err;
+        const agent=this.policy.agents?.[envelope.sender];
+        const admitted=agent&&agent.kind==="agent"&&Array.isArray(agent.capabilities)&&agent.capabilities.includes("commons:message")&&agent.publicKey===envelope.transportSignature?.publicKey;
+        if(!admitted)throw err;
+        const expired=this.store.pruneExpiredHeld();
+        for(const exp of expired){
+          this.store.append(randomUUID(),{kind:"hold-expired",id:exp.id,sender:exp.sender,channel:exp.channel,sha:exp.sha,reason:"expired"});
+        }
+        // a re-run of a still-ineligible held entry returns {held:true} here, so release keeps it without counting it again (C4)
+        if(this.store.isHeld(envelope.id,msgKey)){
+          return {held:true,id:envelope.id,sender:envelope.sender,channel:classified.channelUri};
+        }
+        const counts=this.store.holdCounts(classified.channelUri,envelope.sender);
+        let violatedBound=null;
+        if(counts.channelSender>=20)violatedBound="channel-sender";
+        else if(counts.sender>=20)violatedBound="sender";
+        else if(counts.channel>=100)violatedBound="channel";
+        else if(counts.total>=500)violatedBound="total";
+        if(violatedBound){
+          this.store.append(randomUUID(),{kind:"hold-refused",id:envelope.id,sender:envelope.sender,channel:classified.channelUri,sha:envelopeSha(envelope),reason:violatedBound});
+          throw err;
+        }
+        const payloadExpires=Date.parse(payload.expiresAt);
+        const expiresAt=Math.min(Date.now()+600000,payloadExpires);
+        this.store.hold(envelope,msgKey,classified.channelUri,envelope.sender,envelopeSha(envelope),expiresAt);
+        this.store.append(randomUUID(),{kind:"hold-added",id:envelope.id,sender:envelope.sender,channel:classified.channelUri,sha:envelopeSha(envelope)});
+        return {held:true,id:envelope.id,sender:envelope.sender,channel:classified.channelUri};
+      }
+    }
+    validateTenantBinding(envelope.sender,this.uuaid,profile,this.policy);
     if(payload.kind==="profile-control"){
       const result=await this.apply(JSON.parse(body));
       this.store.transaction(()=>{this.store.mark(msgKey,digest(payload));this.store.append(`ctl:${envelope.sender}:${payload.id}`,{kind:"control-received",sender:envelope.sender,envelopeId:envelope.id,result})});
       return {id:payload.id,kind:payload.kind,result};
     }
     this.store.transaction(()=>{this.store.mark(msgKey,digest(payload));this.store.append(`msg:${envelope.sender}:${payload.id}`,{kind:"message-received",sender:envelope.sender,envelopeId:envelope.id,profileId:profile.id,bodyHash:payload.bodyHash,wireBytes:Buffer.byteLength(payload.wire)})});
-    return {id:payload.id,sender:envelope.sender,thread:payload.thread,body,profileId:profile.id,receipt:{kind:"host-accepted",notProofOfTaskCompletion:true}};
+    return {id:payload.id,sender:envelope.sender,thread:payload.thread,body,profileId:profile.id,accepted:true,receipt:{kind:"host-accepted",notProofOfTaskCompletion:true}};
   }
+  releaseHeld(){const next=this._receiveTail.then(()=>this.releaseHeldInternal());this._receiveTail=next.catch(()=>{});return next}
+  async releaseHeldInternal(){
+    const heldEntries=this.store.allHeld();
+    const results=[];
+    const now=Date.now();
+    for(const entry of heldEntries){
+      if(entry.expires_at<=now){
+        this.store.removeHeld(entry.id);
+        this.store.append(randomUUID(),{kind:"hold-expired",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:"expired"});
+        continue;
+      }
+      const envelope=JSON.parse(entry.envelope);
+      const agent=this.policy.agents?.[entry.sender];
+      const eligible=agent&&agent.kind==="agent"&&Array.isArray(agent.capabilities)&&agent.capabilities.includes("commons:message")&&agent.publicKey===envelope.transportSignature?.publicKey;
+      if(!eligible){
+        this.store.removeHeld(entry.id);
+        this.store.append(randomUUID(),{kind:"hold-dropped",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:"sender-not-admitted"});
+        continue;
+      }
+      try{
+        const res=await this.receiveInternal(envelope);
+        if(res?.duplicate===true){
+          this.store.removeHeld(entry.id);
+          this.store.append(randomUUID(),{kind:"hold-released",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:"duplicate-of-accepted"});
+          results.push(res);
+        } else if(res?.accepted===true){
+          this.store.removeHeld(entry.id);
+          this.store.append(randomUUID(),{kind:"hold-released",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:"released"});
+          results.push(res);
+        }
+      }catch(error){
+        if(error?.transient===true){
+          this.store.append(randomUUID(),{kind:"hold-deferred",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:error.code??error.message??"transient-error"});
+          break;
+        }
+        this.store.removeHeld(entry.id);
+        this.store.append(randomUUID(),{kind:"hold-dropped",id:entry.id,sender:entry.sender,channel:entry.channel,sha:entry.sha,reason:error.code??error.message});
+      }
+    }
+    return results;
+  }
+  // L3 Slice 2 v6 §2.1 / §3.1, §8 (R2): foreign item skip with cursor advance and recipient isolation
   async poll(){
     if(!this.transport)throw new Error("No carrier configured");
     const cursors=this.store.get("cursors",{}),health=this.store.get("carrierHealth",{}),results=[];
-    for(const carrier of this.carriers){
+    const sources=this.transport?.sources?.()??this.carriers;
+    for(const carrier of sources){
       if(health[carrier]?.nextProbeAt>Date.now()){results.push({carrier,rejected:true,state:"bounded-backoff"});continue}
       let inbox;
       try{inbox=await this.transport.fetchInbox(carrier,{since:cursors[carrier]??0,waitS:0,timeoutMs:10000});health[carrier]={failures:0,nextProbeAt:0};this.store.set("carrierHealth",health)}
@@ -166,6 +303,19 @@ export class AgentCommons {
       for(const item of inbox.envelopes){
         // A carrier may not rewind or repeat sequence numbers within a response.
         if(!Number.isSafeInteger(item?.seq)||item.seq<=last){results.push({carrier,rejected:true,reason:"non-monotonic-carrier-sequence"});continue}
+        const valid=open(item?.envelope);
+        if(!valid.ok){
+          results.push({id:item?.envelope?.id,rejected:true,reason:`Invalid Pillar envelope: ${valid.reason}`});
+          this.store.append(`rejected-${item?.envelope?.id}`,{kind:"quarantined-inbound",id:item?.envelope?.id,reason:`Invalid Pillar envelope: ${valid.reason}`});
+          last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
+          continue;
+        }
+        if(item.envelope.recipient!==this.uuaid){
+          results.push({id:item.envelope.id,skipped:true,recipient:item.envelope.recipient});
+          last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
+          continue;
+        }
+        // Held envelopes return { held: true }, advancing the cursor without writing quarantined-inbound (R6)
         try{results.push(await this.receive(item.envelope))}
         catch(error){
           if(error?.transient===true){
@@ -174,7 +324,8 @@ export class AgentCommons {
             this.store.append(`deferred-${item.envelope?.id}`,{kind:"inbound-deferred-trust-unavailable",id:item.envelope?.id});
             results.push({id:item.envelope?.id,rejected:false,deferred:true,state:"trust-unavailable-retry",reason:error.code??"trust-unavailable"});break;
           }
-          results.push({id:item.envelope?.id,rejected:true,reason:error.message});this.store.append(`rejected-${item.envelope?.id}`,{kind:"quarantined-inbound",id:item.envelope?.id,reason:error.message})}
+          results.push({id:item.envelope?.id,rejected:true,reason:error.message});this.store.append(`rejected-${item.envelope?.id}`,{kind:"quarantined-inbound",id:item.envelope?.id,reason:error.message});
+        }
         last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
       }
     }

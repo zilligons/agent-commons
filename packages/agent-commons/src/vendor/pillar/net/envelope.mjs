@@ -28,7 +28,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { jcs } from "../identity/jcs.mjs";
-import { Keychain } from "../identity/keychain.mjs";
+import { Keychain, isStrictEd25519PublicKey } from "../identity/keychain.mjs";
 import { sealPayload, openPayload, E2E_ALG } from "../crypto/e2e.mjs";
 import { verifyDelegationDoc, delegationCoversKind, CAPABILITY_ONLY_KINDS } from "./delegation.mjs";
 
@@ -112,6 +112,7 @@ export function open(envelope, { cryptoInventory } = {}) {
   }
   if (sig.keyId !== envelope.sender) return { ok: false, reason: "keyId-sender-mismatch" };
   if (typeof sig.publicKey !== "string" || !/^[0-9a-f]{64}$/i.test(sig.publicKey)) return { ok: false, reason: "bad-publicKey" };
+  if (!isStrictEd25519PublicKey(sig.publicKey)) return { ok: false, reason: "weak-publicKey" }; // @rule envelope.open-strict-key
   if (typeof sig.signature !== "string" || !/^[0-9a-f]{128}$/i.test(sig.signature)) return { ok: false, reason: "bad-signature-encoding" };
   // Structural checks on the encryption block — an envelope without one is invalid.
   const enc = envelope.enc;
@@ -172,6 +173,7 @@ function openDelegated(envelope, { cryptoInventory } = {}) {
   const reject = (reason) => ({ ok: false, reason: `delegation-invalid:${reason}`, code: 403 });
   const sig = envelope.transportSignature;
   if (typeof sig.publicKey !== "string" || !/^[0-9a-f]{64}$/i.test(sig.publicKey)) return { ok: false, reason: "bad-publicKey" };
+  if (!isStrictEd25519PublicKey(sig.publicKey)) return { ok: false, reason: "weak-publicKey" }; // @rule envelope.open-delegated-strict-key
   if (typeof sig.signature !== "string" || !/^[0-9a-f]{128}$/i.test(sig.signature)) return { ok: false, reason: "bad-signature-encoding" };
   // Structural checks on the encryption block — same rules as the legacy path.
   const enc = envelope.enc;

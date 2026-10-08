@@ -21,7 +21,7 @@ export function initialize({home,target="local",name="Agent Commons"}={}){
   if(!process.env.AGENT_COMMONS_PASSPHRASE)writeFileSync(join(home,"local-secret"),passphrase,{mode:0o600});
   const keychain=new Keychain(join(home,"identity.json"));keychain.save(Keychain.generate(),{passphrase});
   const identity=keychain.publicView();
-  const config={version:1,name,target,role:"host",carriers:[],policy:{mode:"local",registryUrl:"https://api.uuaid.org",authorityUrl:"https://authority.iaaso.org",standardPins:{},blocked:[],agents:{[identity.uuaid]:{kind:"agent",publicKey:identity.publicKeyHex,capabilities:CAPABILITIES}}}};
+  const config={version:1,name,target,role:"host",carriers:[],policy:{mode:"local",offline:true,registryUrl:"https://api.uuaid.org",authorityUrl:"https://authority.iaaso.org",standardPins:{},blocked:[],agents:{[identity.uuaid]:{kind:"agent",publicKey:identity.publicKeyHex,capabilities:CAPABILITIES}}}};
   saveConfig(home,config);
   const store=new CommonsStore(join(home,"commons.db"));
   const template=JSON.parse(readFileSync(new URL(`../profiles/${target==="local"?"local":target}.json`,import.meta.url),"utf8"));

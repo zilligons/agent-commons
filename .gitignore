@@ -13,3 +13,10 @@ local-secret
 *.key
 *.tgz
 cohort-state/
+agent-commons.adapters.json
+
+# L10 scratch + harness evidence
+review-evidence/
+
+# Builder scratch helpers (untracked, never commit)
+.scratch/

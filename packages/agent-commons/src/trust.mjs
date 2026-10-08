@@ -1,5 +1,6 @@
 import { UuaidClient } from "@uuaid/sdk";
 import { Keychain } from "./pillar.mjs";
+import { isLoopbackUrl, isOffline } from "./offline.mjs";
 
 export const REQUIRED_STANDARDS=["IAASO-1001","IAASO-2001","IAASO-3101","IAASO-3301"];
 export class TrustError extends Error { constructor(code,message,{transient=false}={}){super(message);this.code=code;this.transient=transient} }
@@ -7,9 +8,15 @@ export class TrustError extends Error { constructor(code,message,{transient=fals
 export function isTransientTrustFailure(error){if(error?.transient===true)return true;const status=error?.status??error?.statusCode;return error!=null&&!(error instanceof TrustError)&&(!Number.isInteger(status)||status>=500||status===408||status===429)}
 async function backend(fn,code){try{return await fn()}catch(error){if(error instanceof TrustError)throw error;if(isTransientTrustFailure(error))throw new TrustError(code,`Trust backend unavailable: ${String(error?.message??error).slice(0,120)}`,{transient:true});throw error}}
 export class RegistryTrust {
-  constructor({policy={},client,fetchImpl=fetch}={}) {
+  constructor({policy={},client,fetchImpl=fetch,env=process.env}={}) {
     if(policy.mode!==undefined&&!["local","global"].includes(policy.mode))throw new TrustError("INVALID_POLICY_MODE","Policy mode must be explicitly local or global");
-    this.policy=policy;this.policy.mode??="local";this.fetch=fetchImpl;this.client=client??new UuaidClient({baseUrl:policy.registryUrl??"https://api.uuaid.org",timeoutMs:10000,fetchImpl});
+    this.policy=policy;this.policy.mode??="local";this.env=env;
+    // One gate. policy.mode "local" skips only registry verification in authorize() (trust.mjs:44); policy.agents, key binding, and capability checks run in both modes; standards() still fetched (measured 2026-10-04).
+    this.fetch=async(url,init)=>{
+      if(isOffline(this.env,this.policy)&&!isLoopbackUrl(String(url)))throw new TrustError("OFFLINE","Offline mode refused an outbound fetch; no request was sent");
+      return fetchImpl(url,init);
+    };
+    this.client=client??new UuaidClient({baseUrl:policy.registryUrl??"https://api.uuaid.org",timeoutMs:10000,fetchImpl:this.fetch});
   }
   async standards(){
     const pins=this.policy.standardPins??{};

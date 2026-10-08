@@ -12,8 +12,42 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes, createHash, generateKeyPairSync, sign, verify, createPublicKey, createPrivateKey, hkdfSync, createCipheriv, createDecipheriv } from "node:crypto";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 const KEYCHAIN_VERSION = 1;
+
+/**
+ * RFC 8032 / FIPS 186-5 rule for an Ed25519 public key: the canonical encoding
+ * of a point that is not of small order and lies in the prime-order subgroup.
+ *
+ * OpenSSL's Ed25519 verify (node `crypto.verify`) does not check this: it uses
+ * the non-cofactored equation, and 5 of the 8 small-order points verify as
+ * keys. With the identity point as the key, R = identity and S = 0 verifies on
+ * every message, so anyone could forge a signature "from" that key's uuaid
+ * (found 2026-10-06). The same rule as `isStrictEd25519PublicKey` in
+ * @uuaid/pillar-client.
+ *
+ * The answer depends on the key alone, so it is cached (bounded).
+ */
+const STRICT_KEY_CACHE_MAX = 4096;
+const strictKeyCache = new Map();
+
+export function isStrictEd25519PublicKey(publicKeyHex) {
+  if (typeof publicKeyHex !== "string" || !/^[0-9a-f]{64}$/i.test(publicKeyHex)) return false;
+  const hex = publicKeyHex.toLowerCase();
+  const cached = strictKeyCache.get(hex);
+  if (cached !== undefined) return cached;
+  let ok = false;
+  try {
+    const point = ed25519.Point.fromHex(hex, false);
+    ok = point.toHex() === hex && !point.isSmallOrder() && point.isTorsionFree();
+  } catch (_e) {
+    ok = false;
+  }
+  if (strictKeyCache.size >= STRICT_KEY_CACHE_MAX) strictKeyCache.delete(strictKeyCache.keys().next().value);
+  strictKeyCache.set(hex, ok);
+  return ok;
+}
 
 /**
  * Derive a stable, publishable local id from a raw Ed25519 public key.  This
@@ -149,6 +183,7 @@ export class Keychain {
   }
 
   static verifyDetached(publicKeyHex, data, signatureBytes) {
+    if (!isStrictEd25519PublicKey(publicKeyHex)) return false; // @rule keychain.strict-key
     const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
     const der = Buffer.concat([spkiPrefix, Buffer.from(publicKeyHex, "hex")]);
     const pub = createPublicKey({ key: der, format: "der", type: "spki" });

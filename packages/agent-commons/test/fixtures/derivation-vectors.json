@@ -1,0 +1,26 @@
+{
+  "note": "Pillar transport identity (key-derived, unregistered). Published fixtures, not operational keys. Oracle is sha256(raw 32-byte Ed25519 public key), first 16 bytes, lowercase hex, laid out 8-4-4-4-12. The expected localId is a literal: the test must not recompute it with either production function. Seeds are the 32-byte Ed25519 private seeds. rawPublicHex is the SPKI DER tail.",
+  "vectors": [
+    {
+      "id": "l7-seed-zero",
+      "seedHex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "rawPublicHex": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+      "localId": "139e3940-e64b-5491-7220-88d9a0d74162",
+      "uuaid": "uuaid:foundation:agent:139e3940-e64b-5491-7220-88d9a0d74162"
+    },
+    {
+      "id": "l7-seed-ff",
+      "seedHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "rawPublicHex": "76a1592044a6e4f511265bca73a604d90b0529d1df602be30a19a9257660d1f5",
+      "localId": "af822958-f2d7-5afb-91f8-a8f4da253230",
+      "uuaid": "uuaid:foundation:agent:af822958-f2d7-5afb-91f8-a8f4da253230"
+    },
+    {
+      "id": "l7-seed-seq",
+      "seedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "rawPublicHex": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "localId": "65b60673-d6ed-884b-f01c-2c222d82ada0",
+      "uuaid": "uuaid:foundation:agent:65b60673-d6ed-884b-f01c-2c222d82ada0"
+    }
+  ]
+}

@@ -13,6 +13,10 @@ import {
 } from "../packages/agent-commons/src/profiles.mjs";
 import type { Profile } from "../packages/agent-commons/src/index.d.ts";
 import { storage } from "./storage";
+import { isOffline, isLoopbackUrl } from "../packages/agent-commons/src/offline.mjs";
+// L3 Slice 2 v6 §2.3: runtime, loopback transport, and memory store integration
+// @ts-ignore
+import { AgentCommons, CommonsStore, MemoryLoopbackTransport } from "../packages/agent-commons/src/index.mjs";
 
 type NetworkState = {
   profiles: Profile[];
@@ -51,8 +55,210 @@ export class NetworkConsole {
       this.save();
     }
   }
+  cachedVerification: any = null;
   save() {
     storage.saveNetwork(this.state);
+  }
+
+  // L3 Slice 2 v6 §2.3 / §8: Internal scripted self-test with awaited reverse cleanup
+  async runChannelVerification(config: any = {}) {
+    // Upfront refusal order (§2.3, §8, C2, R2)
+    if (config.mode === "global" || (config.mode !== undefined && config.mode !== "local")) {
+      throw new Error("Console verification refuses global or non-local mode");
+    }
+    if (config.carrier && !isLoopbackUrl(config.carrier)) {
+      throw new Error(`Console verification refuses remote transports: ${config.carrier}`);
+    }
+    if (process.env.AGENT_COMMONS_OFFLINE === "0" || !isOffline(process.env)) {
+      throw new Error("Console verification requires offline environment (AGENT_COMMONS_OFFLINE != 0)");
+    }
+    const env = config.env ?? process.env;
+    if (env.AGENT_COMMONS_OFFLINE === "0" || !isOffline(env)) {
+      throw new Error("Console verification requires offline environment (AGENT_COMMONS_OFFLINE != 0)");
+    }
+    const profile = config.profile ?? this.state.profiles.find((p) => p.scope === "local") ?? this.state.profiles[0];
+    if (!profile || profile.scope === "global") {
+      throw new Error("Console verification refuses global profiles");
+    }
+
+    // Pinned acquisition order: atlasStore -> lyraStore -> transport
+    const acquired: Array<{ name: string; close: () => Promise<void> | void }> = [];
+    const cleanupErrors: Array<{ name: string; error: any }> = [];
+    let atlasStore: CommonsStore | null = null;
+    let lyraStore: CommonsStore | null = null;
+    let transport: MemoryLoopbackTransport | null = null;
+
+    try {
+      atlasStore = new CommonsStore(":memory:");
+      acquired.push({ name: "atlas", close: () => atlasStore?.close() });
+
+      if (config.failureInjection?.storeLyra) {
+        throw new Error("construction-failed");
+      }
+      lyraStore = new CommonsStore(":memory:");
+      acquired.push({ name: "lyra", close: () => lyraStore?.close() });
+
+      transport = new MemoryLoopbackTransport({ instanceId: config.instanceId });
+      if (config.failureInjection?.transportCloseSync) {
+        transport.close = () => { throw new Error("close-failed"); };
+      } else if (config.failureInjection?.transportCloseAsync) {
+        transport.close = () => Promise.reject(new Error("close-failed"));
+      }
+      acquired.push({ name: "transport", close: () => transport?.close() });
+
+      const channelUri = config.channelUri ?? "channel://local/community/general";
+      const tenantId = config.tenantId ?? "tenant-a";
+
+      const atlasIdentity = this.identity("atlas");
+      const atlasKeychain = {
+        _identity: atlasIdentity,
+        sign: (data: Buffer) => sign(null, data, atlasIdentity.privateKey),
+      };
+      const lyraIdentity = this.identity("lyra");
+      const lyraKeychain = {
+        _identity: lyraIdentity,
+        sign: (data: Buffer) => sign(null, data, lyraIdentity.privateKey),
+      };
+
+      const policy = {
+        mode: "local" as const,
+        offline: true,
+        channelsEnabled: true,
+        channels: {
+          [channelUri]: {
+            members: config.revokedSender
+              ? [lyraIdentity.uuaid]
+              : (config.revokedReceiver
+                ? [atlasIdentity.uuaid]
+                : [atlasIdentity.uuaid, lyraIdentity.uuaid]),
+            allowForwarding: false,
+          },
+        },
+        agents: {
+          [atlasIdentity.uuaid]: {
+            kind: "agent" as const,
+            publicKey: atlasIdentity.publicKeyHex,
+            capabilities: ["commons:message"],
+            tenantId: config.mismatchedTenant ? "tenant-b" : tenantId,
+          },
+          [lyraIdentity.uuaid]: {
+            kind: "agent" as const,
+            publicKey: lyraIdentity.publicKeyHex,
+            capabilities: ["commons:message"],
+            tenantId,
+          },
+        },
+        tenantProfiles: {
+          [profile.id]: tenantId,
+        },
+      };
+
+      const atlasRuntime = new AgentCommons({
+        keychain: atlasKeychain as any,
+        store: atlasStore,
+        policy: policy as any,
+        transport,
+      });
+      const lyraRuntime = new AgentCommons({
+        keychain: lyraKeychain as any,
+        store: lyraStore,
+        policy: policy as any,
+        transport,
+      });
+
+      atlasRuntime.addProfile(profile);
+      lyraRuntime.addProfile(profile);
+
+      if (config.failureInjection?.admission) {
+        throw new Error("admission-refused");
+      }
+
+      const expectedBody = config.body ?? "console verification ping";
+      const sendResult = await atlasRuntime.send({
+        recipient: lyraIdentity.uuaid,
+        profileId: profile.id,
+        thread: channelUri,
+        body: expectedBody,
+      });
+
+      // R1: Require intended envelope carrier acceptance
+      const carrierDelivery = sendResult.result?.[0];
+      if (
+        !carrierDelivery ||
+        carrierDelivery.state !== "carrier-accepted" ||
+        carrierDelivery.receipt?.accepted !== true
+      ) {
+        throw new Error(
+          `Console verification send unaccepted by carrier: state=${carrierDelivery?.state}`
+        );
+      }
+
+      const pollResult = await lyraRuntime.poll();
+      if (!Array.isArray(pollResult) || pollResult.length === 0) {
+        throw new Error("Console verification poll produced empty result");
+      }
+
+      // R1: Require matching receiver host acceptance, body, thread, profile
+      const received = pollResult.find(
+        (item: any) =>
+          item.sender === atlasIdentity.uuaid &&
+          item.thread === channelUri &&
+          item.profileId === profile.id
+      );
+
+      if (
+        !received ||
+        received.accepted !== true ||
+        received.rejected === true ||
+        received.deferred === true ||
+        received.body !== expectedBody ||
+        received.receipt?.kind !== "host-accepted"
+      ) {
+        throw new Error(
+          `Console verification received message unaccepted or mismatched: ${JSON.stringify(pollResult)}`
+        );
+      }
+
+      this.cachedVerification = {
+        verifiedAt: new Date().toISOString(),
+        channels: [
+          {
+            channelUri,
+            state: "verified-active",
+            members: [atlasIdentity.uuaid, lyraIdentity.uuaid],
+          },
+        ],
+        transports: [
+          {
+            name: "memory",
+            state: "operational",
+            loopbackSafe: true,
+          },
+        ],
+      };
+
+      return {
+        ok: true,
+        channelUri,
+        profile,
+        sendResult,
+        pollResult,
+        acquired: acquired.map((r) => r.name),
+        cleanupErrors,
+      };
+    } finally {
+      // Deterministic reverse-order cleanup: transport -> lyra -> atlas (R3: unconditional awaited per-resource catch)
+      for (const resource of [...acquired].reverse()) {
+        try {
+          config.hooks?.onAttempt?.(resource.name);
+          await resource.close();
+          config.hooks?.onClose?.(resource.name);
+        } catch (error: any) {
+          config.hooks?.onCatch?.(error);
+          cleanupErrors.push({ name: resource.name, error });
+        }
+      }
+    }
   }
   create(input: { name: string; namespace: string; fixtures: string[] }) {
     if (!/^(local|tenant)\//.test(input.namespace))
@@ -113,10 +319,45 @@ export class NetworkConsole {
     this.save();
     return prepared;
   }
-  async check() {
+  async check(deps: {
+    fetchImpl?: typeof fetch;
+    lookupImpl?: typeof lookup;
+    env?: NodeJS.ProcessEnv;
+  } = {}) {
+    const env = deps.env ?? process.env;
+    const fetchImpl = deps.fetchImpl ?? fetch;
+    const lookupImpl = deps.lookupImpl ?? lookup;
+    if (isOffline(env)) {
+      const checks = [
+        {
+          service: "IAASO register",
+          state: "offline",
+          detail: "Offline mode is on. No request was sent to authority.iaaso.org.",
+        },
+        {
+          service: "UUAID registry",
+          state: "offline",
+          detail: "Offline mode is on. No request was sent to api.uuaid.org.",
+        },
+        {
+          service: "agentnet.chat",
+          state: "offline",
+          detail: "Offline mode is on. DNS was not queried.",
+        },
+        {
+          service: "zilligon.com",
+          state: "offline",
+          detail: "Offline mode is on. DNS was not queried.",
+        },
+      ];
+      this.state.checks = checks;
+      this.state.checkedAt = new Date().toISOString();
+      this.save();
+      return checks;
+    }
     const checks: any[] = [];
     try {
-      const response = await fetch("https://authority.iaaso.org/v1/standards", {
+      const response = await fetchImpl("https://authority.iaaso.org/v1/standards", {
         signal: AbortSignal.timeout(12000),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -149,7 +390,7 @@ export class NetworkConsole {
       });
     }
     try {
-      const r = await fetch("https://api.uuaid.org/health", {
+      const r = await fetchImpl("https://api.uuaid.org/health", {
         signal: AbortSignal.timeout(10000),
       });
       checks.push({
@@ -167,7 +408,7 @@ export class NetworkConsole {
     }
     for (const host of ["agentnet.chat", "zilligon.com"]) {
       try {
-        await lookup(host);
+        await lookupImpl(host);
         checks.push({
           service: host,
           state: "dns-resolves",
@@ -199,7 +440,18 @@ export class NetworkConsole {
       node: ">=22.13.0",
       pillarVersion: "2.0.2",
       globalAdmission: "closed-until-credentials-and-pins",
+      offline: isOffline(process.env),
       iaasoStatus: "implementation-draft-not-certified",
+      // L3 Slice 2 v6 §2.3: expose channels, transports, and cachedVerification
+      channels: this.cachedVerification?.channels ?? [],
+      transports: this.cachedVerification?.transports ?? [
+        {
+          name: "memory",
+          state: "idle",
+          loopbackSafe: true,
+        },
+      ],
+      cachedVerification: this.cachedVerification ?? null,
       identities: ["atlas", "lyra", "orion", "sentinel"].map((id) => ({
         id,
         uuaid: this.identity(id).uuaid,

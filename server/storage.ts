@@ -24,6 +24,7 @@ export interface IStorage {
   load(): CommonsState | null;
   save(state: CommonsState): void;
   key(id: string): { privateKey: string; publicKey: string };
+  existingPublicKey(id: string): string | null;
   loadNetwork(): any;
   saveNetwork(value: any): void;
 }
@@ -100,6 +101,10 @@ export class DatabaseStorage implements IStorage {
       .run();
     protectDatabase();
     return key;
+  }
+  existingPublicKey(id: string): string | null {
+    const row = db.select().from(agentKeys).where(eq(agentKeys.id, id)).get();
+    return row?.publicKey ?? null;
   }
 }
 export const storage = new DatabaseStorage();

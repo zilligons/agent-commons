@@ -9,12 +9,21 @@
     "blob/blob.mjs": "6795e4fa34ca5ba0b9e13d8339ffdd504d3e003732a4b2190348855f6bb9d41c",
     "crypto/e2e.mjs": "538965c2834c7bae4c508fd203ae757c3e2a286c4395dc90b0f5131cc123f159",
     "identity/jcs.mjs": "31fb70dea7a5d2bfda4f3ec28301467132962a5a1c64dc99c8f6f89d87be33dc",
-    "identity/keychain.mjs": "0842c925cef3236eefec546e98f72bbbddd58a0f6defc7d7995ecec62badef7e",
+    "identity/keychain.mjs": {
+      "sha256": "a8fc75fa3d3305ed4b994e7c998b09314294b9552456a652e033bcfde4a39d9f",
+      "source": "pillar commit 2ef548d (local, no remote - not published)"
+    },
     "identity/tier.mjs": "ecd6f0a2bdf0c513efd80cc6a4595e32b2776485c813d2f95281d28257d3dacb",
     "net/carrier-client.mjs": "e4cd6541217c6d2712f24456bfe820f6063f0efc837b932646fd4b93cddb7b3c",
     "net/delegation.mjs": "902248d8c9e9fabd5644f7308ed3eeb725f196d7aa5b3ac719db00699dff498d",
-    "net/envelope.mjs": "6185c5894773445877c0e80d3e72b7b53aa5924a0f697f331704dcef97cb3ed8",
-    "net/refusals.mjs": "52bfcd43093b1f235b665cfc034a3daa17b298a116a368f1cceb3ae337d416c3",
+    "net/envelope.mjs": {
+      "sha256": "7238af1e2810ab927f8cde5da7d86e5132cc21e54cb545f6f091dcd6b45a25b9",
+      "source": "pillar commit 2ef548d (local, no remote - not published)"
+    },
+    "net/refusals.mjs": {
+      "sha256": "dcd52629b4f6e299c5b10446aa404a58a105685fd00575a16fcdc2e01ddc1cc8",
+      "source": "pillar commit 2ef548d (local, no remote - not published)"
+    },
     "net/seed-tier.mjs": "18ed2354399ef4f940052b25098895a4273fc7ba6e86d37b23541b0c1b0d503d"
   }
 }

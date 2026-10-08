@@ -32,6 +32,7 @@ export const REFUSAL_FIXES = Object.freeze({
   "keyId-sender-mismatch": "sign with transportSignature.keyId equal to the sender UUAID, or send under a delegation",
   "publicKey-sender-mismatch": "send from the UUAID your signing key derives, or attach the principal's delegation",
   "bad-signature": "sign again with this identity's own key over the exact bytes; the signature does not verify",
+  "weak-publicKey": "use a real Ed25519 identity key; this key is a small-order or non-canonical point that can sign anything, so no signature under it counts",
   "delegation-invalid": "mint a fresh delegation from the principal, then resend",
   // Carrier, envelope shape and crypto (envelope.mjs open()): one fix for all
   "not-object": RESEAL,

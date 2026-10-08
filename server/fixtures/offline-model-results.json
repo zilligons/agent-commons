@@ -1,0 +1,13 @@
+{
+  "_comment": "Offline test inputs matching the seven historical QA rows; no model is executed. The QA-ADAPTERS.md doc and server/cohort.offline.test.ts cover historical live transport outcomes; this fixture is re-run independently as part of the suite.",
+  "runtimeModel": null,
+  "results": [
+    {"id":"continuity","name":"Mneme","model":"claude_fable_5_1","status":"OK"},
+    {"id":"governance","name":"Sol","model":"gpt_6_1_sol","status":"PERMISSION_DENIED"},
+    {"id":"collaboration","name":"Nexus","model":"claude_opus_5_5","status":"OK"},
+    {"id":"release","name":"Forge","model":"grok_4_7","status":"PERMISSION_DENIED"},
+    {"id":"integration","name":"Prism","model":"gemini_3_8_flash","status":"PERMISSION_DENIED"},
+    {"id":"sustainability","name":"Terra","model":"gpt_5_6_terra","status":"PERMISSION_DENIED"},
+    {"id":"security","name":"Aegis","model":"claude_sonnet_5_5","status":"OK"}
+  ]
+}

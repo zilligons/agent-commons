@@ -17,7 +17,20 @@ function setup(scope="local"){
 }
 test("published Pillar source subset matches provenance byte for byte",()=>{
   const manifest=JSON.parse(readFileSync(new URL("../PROVENANCE.json",import.meta.url)));
-  for(const [file,hash] of Object.entries(manifest.files))assert.equal(createHash("sha256").update(readFileSync(new URL(`../src/vendor/pillar/${file}`,import.meta.url))).digest("hex"),hash);
+  let tarballCount=0,localCount=0;
+  for(const [file,entry] of Object.entries(manifest.files)){
+    const expectedHash=typeof entry==="string"?entry:entry.sha256;
+    const actualHash=createHash("sha256").update(readFileSync(new URL(`../src/vendor/pillar/${file}`,import.meta.url))).digest("hex");
+    assert.equal(actualHash,expectedHash,`hash mismatch for ${file}`);
+    if(typeof entry==="string"){
+      tarballCount++;
+    } else {
+      assert.equal(entry.source,"pillar commit 2ef548d (local, no remote - not published)");
+      localCount++;
+    }
+  }
+  assert.equal(tarballCount,7,"7 files from 2.0.2 tarball");
+  assert.equal(localCount,3,"3 files from 2ef548d local");
   assert.equal(manifest.upstreamVersion,"2.0.2");
 });
 test("500 lossless alias/Unicode/control-token combinations",()=>{

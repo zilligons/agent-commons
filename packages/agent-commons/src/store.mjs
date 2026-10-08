@@ -13,6 +13,10 @@ export class CommonsStore {
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,previous TEXT NOT NULL,hash TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,body TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'pending',error TEXT);
       CREATE TABLE IF NOT EXISTS processed(id TEXT PRIMARY KEY,hash TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS held(id TEXT PRIMARY KEY,msg_key TEXT NOT NULL UNIQUE,channel TEXT NOT NULL,sender TEXT NOT NULL,envelope TEXT NOT NULL,sha TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS held_channel ON held(channel);
+      CREATE INDEX IF NOT EXISTS held_sender ON held(sender);
+      CREATE INDEX IF NOT EXISTS held_channel_sender ON held(channel,sender);
     `);
     if(!this.db.prepare("PRAGMA table_info(outbox)").all().some(c=>c.name==="profile_id"))this.db.exec("ALTER TABLE outbox ADD COLUMN profile_id TEXT");
     if(path!==":memory:")chmodSync(path,0o600);
@@ -44,5 +48,26 @@ export class CommonsStore {
   pending(){return this.db.prepare("SELECT * FROM outbox WHERE state='pending' AND next_at<=? ORDER BY rowid LIMIT 50").all(Date.now())}
   delivered(id){this.db.prepare("UPDATE outbox SET state='accepted',error=NULL WHERE id=?").run(id)}
   failure(id,error){const row=this.db.prepare("SELECT attempts FROM outbox WHERE id=?").get(id);const attempts=row.attempts+1;const state=attempts>=5?"quarantined":"pending";this.db.prepare("UPDATE outbox SET attempts=?,next_at=?,state=?,error=? WHERE id=?").run(attempts,Date.now()+Math.min(300000,1000*2**attempts),state,error.slice(0,300),id)}
+  hold(envelope,msgKey,channel,sender,sha,expiresAt){this.db.prepare("INSERT INTO held(id,msg_key,channel,sender,envelope,sha,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").run(envelope.id,msgKey,channel,sender,JSON.stringify(envelope),sha,expiresAt,Date.now())}
+  isHeld(id,msgKey){return !!this.db.prepare("SELECT 1 FROM held WHERE id=? OR msg_key=?").get(id,msgKey)}
+  removeHeld(id){this.db.prepare("DELETE FROM held WHERE id=?").run(id)}
+  allHeld(){return this.db.prepare("SELECT * FROM held ORDER BY created_at ASC, rowid ASC").all()}
+  holdCounts(channel,sender){
+    const total=this.db.prepare("SELECT COUNT(*) AS n FROM held").get().n;
+    const channelCount=this.db.prepare("SELECT COUNT(*) AS n FROM held WHERE channel=?").get(channel).n;
+    const senderCount=this.db.prepare("SELECT COUNT(*) AS n FROM held WHERE sender=?").get(sender).n;
+    const channelSender=this.db.prepare("SELECT COUNT(*) AS n FROM held WHERE channel=? AND sender=?").get(channel,sender).n;
+    return {total,channel:channelCount,sender:senderCount,channelSender};
+  }
+  pruneExpiredHeld(now=Date.now()){
+    return this.transaction(()=>{
+      const expired=this.db.prepare("SELECT * FROM held WHERE expires_at<=?").all(now);
+      if(expired.length){
+        const del=this.db.prepare("DELETE FROM held WHERE id=?");
+        for(const row of expired)del.run(row.id);
+      }
+      return expired;
+    });
+  }
   close(){this.db.close()}
 }

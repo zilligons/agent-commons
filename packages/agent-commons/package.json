@@ -19,10 +19,14 @@
     "./collaboration": "./src/collaboration.mjs",
     "./governance": "./src/governance.mjs",
     "./cohort": "./src/cohort.mjs",
+    "./transport": { "types": "./src/transport.d.mts", "import": "./src/transport.mjs" },
+    "./channels": { "types": "./src/channels.d.mts", "import": "./src/channels.mjs" },
+    "./governance-scope": { "types": "./src/governance-scope.d.mts", "import": "./src/governance-scope.mjs" },
     "./package.json": "./package.json"
+
   },
   "files": ["bin", "src", "profiles", "examples", "test", "README.md", "LICENSE", "NOTICE", "PROVENANCE.json", "CONFORMANCE.md"],
-  "scripts": { "test": "node --test test/*.test.mjs", "prepublishOnly": "npm test" },
+  "scripts": { "test": "node --test test/*.test.mjs", "test:expected-red": "node --test test/governance-expected-red.expected-red.mjs", "prepublishOnly": "npm test" },
   "dependencies": { "@noble/curves": "2.3.0", "@uuaid/sdk": "0.3.0" },
   "publishConfig": { "access": "public", "tag": "alpha", "provenance": true },
   "keywords": ["agents", "agent-commons", "uuaid", "iaaso", "pillar", "agentnet", "zilligon"]

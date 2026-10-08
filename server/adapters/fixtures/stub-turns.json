@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "slots": {
+    "continuity": {
+      "probe": { "text": "OK" },
+      "stages": {
+        "needs": { "text": "{\"body\":\"Continuity needs: local memory ledger access and a deterministic slot adapter\",\"nextTask\":\"wire continuity recall into cohort.run\",\"evidenceRequired\":\"stub.test.ts passes\"}" },
+        "plan": { "text": "{\"body\":\"Continuity plan: extend stub fixtures for all seven slots\",\"nextTask\":\"review fixture coverage\",\"evidenceRequired\":\"registry.test.ts passes\"}" },
+        "build": { "text": "{\"body\":\"Continuity build: adapter registry and stub adapter implemented\",\"nextTask\":\"add integration test\",\"evidenceRequired\":\"cohort.test.ts passes\"}" },
+        "review": { "text": "{\"body\":\"Continuity review: adapter layer does not alter default path\",\"nextTask\":\"verify with regression suite\",\"evidenceRequired\":\"node --import tsx --test server/*.test.ts passes\"}" }
+      },
+      "default": { "text": "{\"body\":\"continuity stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "governance": {
+      "probe": { "text": "OK" },
+      "stages": {
+        "needs": { "text": "{\"body\":\"Governance needs: appeal_path on every refusal\",\"nextTask\":\"add appeal_path to governance.mjs\",\"evidenceRequired\":\"T4 two-pole test passes\"}" },
+        "plan": { "text": "{\"body\":\"Governance plan: label local independence DECLARED\",\"nextTask\":\"update governance.mjs\",\"evidenceRequired\":\"T5 two-pole test passes\"}" }
+      },
+      "default": { "text": "{\"body\":\"governance stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "collaboration": {
+      "probe": { "text": "OK" },
+      "default": { "text": "{\"body\":\"collaboration stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "release": {
+      "probe": { "text": "OK" },
+      "default": { "text": "{\"body\":\"release stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "integration": {
+      "probe": { "text": "OK" },
+      "default": { "text": "{\"body\":\"integration stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "sustainability": {
+      "probe": { "text": "OK" },
+      "default": { "text": "{\"body\":\"sustainability stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    },
+    "security": {
+      "probe": { "text": "OK" },
+      "default": { "text": "{\"body\":\"security stub default\",\"nextTask\":\"define stage fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+    }
+  },
+  "defaultProbe": { "text": "OK" },
+  "defaultStage": { "text": "{\"body\":\"stub default stage response\",\"nextTask\":\"define fixture\",\"evidenceRequired\":\"fixture exists\"}" }
+}

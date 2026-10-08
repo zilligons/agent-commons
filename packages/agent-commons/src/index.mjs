@@ -10,3 +10,6 @@ export { PeerGovernance, GovernanceError, verifyGovernanceDocument, createAction
 export { CollaborationScheduler, CollaborationError, createCollaboration, createRoster, rosterFromModels, createFilePersistence, createMemoryPersistence, createContinuity, memoryFromContinuity, validateProposal, validateUnifiedDiff, validatePatchPath, hmacIntegrity } from "./collaboration.mjs";
 export { createProfile, verifyProfile, proposeAlias, encode, decode, benchmark, contribution, signDocument, verifyDocument, digest, BASE_PROTOCOL } from "./profiles.mjs";
 export { Keychain, localIdFromKey, CarrierClient, seal, open, decrypt, envelopeSha } from "./pillar.mjs";
+export { MemoryLoopbackTransport, PillarCarrierTransport } from "./transport.mjs";
+export { classifyThread, assertChannelSendAdmission, assertChannelReceiveAdmission, assertForwardingPermission, validateTenantBinding, CANONICAL_CHANNEL_REGEX, RESERVED_CHANNEL_PREFIX } from "./channels.mjs";
+export { classifyOperationTier, verifyPrincipalGovernance, MockPrincipalStatusVerifier } from "./governance-scope.mjs";

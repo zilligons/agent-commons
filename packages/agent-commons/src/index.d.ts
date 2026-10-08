@@ -1,3 +1,6 @@
+// L3 Slice 2 v6 §2.2: concrete transports and channel/tenant declarations
+import type { MessageTransport } from './transport.mjs';
+
 export interface Profile {
   v:"agent-commons/1";id:string;namespace:string;name:string;scope:"local"|"tenant"|"global";
   parent:string|null;revision:number;quorum:number;lexicon:Record<string,string>;fixtureHash:string;fixtures:string[];
@@ -5,11 +8,12 @@ export interface Profile {
 }
 export interface Admission {
   kind:"agent";publicKey:string;capabilities:string[];credentialId?:string;
-  controllerId?:string;affiliations?:string[];
+  controllerId?:string;affiliations?:string[];tenantId?:string;
 }
 export interface Policy {
-  mode:"local"|"global";agents:Record<string,Admission>;blocked?:string[];
+  mode:"local"|"global";offline?:boolean;agents:Record<string,Admission>;blocked?:string[];
   registryUrl?:string;authorityUrl?:string;standardPins?:Record<string,string>;
+  channelsEnabled?:boolean;channels?:Record<string,{members:string[];allowForwarding?:boolean}>;tenantProfiles?:Record<string,string>;
 }
 export class Keychain {
   constructor(path:string);_identity:any;static generate(options?:object):any;static localIdFromKey(key:Uint8Array):string;
@@ -26,7 +30,7 @@ export class RegistryTrust {
   publishedProfilePin(code:string,hash:string):Promise<any>;
 }
 export class AgentCommons {
-  constructor(options:{keychain:Keychain;store?:CommonsStore;policy?:Policy;carriers?:string[];trust?:RegistryTrust});
+  constructor(options:{keychain:Keychain;store?:CommonsStore;policy?:Policy;carriers?:string[];transport?:MessageTransport;trust?:RegistryTrust});
   readonly uuaid:string;readonly publicKey:string;store:CommonsStore;
   profiles():Profile[];profile(id:string):Profile;addProfile(profile:Profile):Profile;
   activeProfile(namespace:string):Profile;authorizedProfile(id:string):Promise<Profile>;
@@ -100,3 +104,6 @@ export function validateProposal(raw:any,options?:any):any;
 export function validateUnifiedDiff(diff:string,path:string):any;
 export function validatePatchPath(path:string,allowedPaths:string[],policy?:any):string;
 export function hmacIntegrity(secret:string|Buffer):{sign(bytes:Buffer):string;verify(bytes:Buffer,signature:string):boolean};
+export * from "./transport.mjs";
+export * from "./channels.mjs";
+export * from "./governance-scope.mjs";

@@ -61,7 +61,7 @@ CI and the release verify job, which have no `id-token` permission:
 5. Run packed `cohort-init --target zilligon.com` and `cohort-status`. Require the seven roster ids, `registration: not-performed`, and `certified: false`. Delete that home in the same step. It contains seven `local-secret` files and must not be printed or uploaded.
 6. Also run `init --target zilligon.com` and `doctor`, then delete that home.
 
-`doctor` currently hardcodes `packageRelease` as `0.2.0-alpha.1` in `bin/agent-commons.mjs`. The release verify job fails if that string does not equal the dispatched version. Do not hide that by skipping the check. A later alpha needs a separate source change; this procedure does not edit that file.
+`doctor` currently hardcodes `packageRelease` as `0.2.0-alpha.2` in `bin/agent-commons.mjs`. The release verify job fails if that string does not equal the dispatched version. Do not hide that by skipping the check. A later alpha needs a separate source change; this procedure does not edit that file.
 
 ## Publish job
 
@@ -115,7 +115,7 @@ The `@uuaid` scope already has other packages. This package name is still absent
 
 ### Bootstrap without burning the release version
 
-npm versions are immutable. Do not manually publish `0.2.0-alpha.1`, or any version you want attested, as the stub. A manual first publish of that version can never be replaced by a provenance release.
+npm versions are immutable. Do not manually publish `0.2.0-alpha.2`, or any version you want attested, as the stub. A manual first publish of that version can never be replaced by a provenance release.
 
 An authorized npm namespace administrator, through an authenticated publishing environment outside this workflow:
 

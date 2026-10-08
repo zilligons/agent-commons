@@ -39,7 +39,7 @@ try{
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});
     else if(command==="status")print(runtime.status());
     else if(command==="doctor"){
-      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.1",packageRegistryPublication:"release-pending"};
+      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.2",packageRegistryPublication:"release-pending"};
       if(flags.network){try{checks.standards=(await runtime.trust.standards()).length}catch(e){checks.standardsError=e.code??e.message}}
       print(checks);
     }else if(command==="admit"){

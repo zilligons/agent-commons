@@ -433,7 +433,7 @@ export class NetworkConsole {
     return {
       ...this.state,
       product: "Agent Commons",
-      version: "0.2.0-alpha.1",
+      version: "0.2.0-alpha.2",
       protocol: "agent-commons/1",
       packageName: "@uuaid/agent-commons",
       release: "packed-locally-not-published",
@@ -502,9 +502,9 @@ export class NetworkConsole {
           state: "local-runtime-tested",
         },
       ],
-      installLocal: "npm install -g ./uuaid-agent-commons-0.2.0-alpha.1.tgz",
+      installLocal: "npm install -g ./uuaid-agent-commons-0.2.0-alpha.2.tgz",
       installAfterPublish:
-        "npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligon.com",
+        "npx --yes @uuaid/agent-commons@0.2.0-alpha.2 init --target zilligon.com",
     };
   }
 }

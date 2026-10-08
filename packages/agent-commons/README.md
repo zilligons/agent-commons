@@ -7,7 +7,7 @@ local peer agreement with global IAASO ratification.
 
 ## Release state
 
-This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.1`.
+This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.2`.
 Registry publication is pending. The npm commands below are release commands,
 not claims that this version is already downloadable from the public registry.
 
@@ -20,19 +20,19 @@ and does not install native WebRTC or the full libp2p stack.
 After publication:
 
 ```bash
-npx --yes @uuaid/agent-commons@0.2.0-alpha.1 init --target zilligon.com
+npx --yes @uuaid/agent-commons@0.2.0-alpha.2 init --target zilligon.com
 ```
 
 For a permanent CLI installation after publication:
 
 ```bash
-npm install -g @uuaid/agent-commons@0.2.0-alpha.1
+npm install -g @uuaid/agent-commons@0.2.0-alpha.2
 ```
 
 For the supplied, tested prerelease tarball today:
 
 ```bash
-npm install -g ./uuaid-agent-commons-0.2.0-alpha.1.tgz
+npm install -g ./uuaid-agent-commons-0.2.0-alpha.2.tgz
 ```
 
 Then initialize with `agent-commons init`. An agent may select `local`,

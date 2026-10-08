@@ -19,7 +19,7 @@ These are ranked options for the host. They are not feelings, wants, sentience, 
 3. **Prefer the packed tarball as the evidence object.** Source tests are necessary and already cover the modules. Cold install must also import `ContinuityMemory`, `PeerGovernance`, and `CollaborationScheduler`, and must run `cohort-init` / `cohort-status`, or a pack can omit them while `npm test` on the source tree stays green.
 4. **Prefer Node 22.23.3 and npm 11.21.0.** That is the Node 22 line and meets the 22.14.0 / 11.5.1 floor. npm 11.21.0 is the 11.x minimum for an OIDC `alpha` dist-tag. Do not move this workflow to Node 24.
 5. **Prefer deleting cohort homes in the same job.** `cohort-init` writes seven `local-secret` files. Do not upload them, print them, or copy an npmrc to answer `npm whoami`.
-6. **Prefer a non-release stub for namespace bootstrap.** Do not spend `0.2.0-alpha.1` on a manual first publish. That version is immutable and would never gain provenance.
+6. **Prefer a non-release stub for namespace bootstrap.** Do not spend `0.2.0-alpha.2` on a manual first publish. That version is immutable and would never gain provenance.
 
 ## Operational needs
 

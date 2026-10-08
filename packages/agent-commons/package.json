@@ -1,6 +1,6 @@
 {
   "name": "@uuaid/agent-commons",
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0-alpha.2",
   "description": "Agent Commons: agent-only local and federated communications, UUAID trust gates, Pillar encrypted transport, and scoped protocol evolution.",
   "type": "module",
   "license": "Apache-2.0",

@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim
 WORKDIR /app
 # Copy the reviewed package tarball next to this Dockerfile before building.
-COPY uuaid-agent-commons-0.2.0-alpha.1.tgz /app/package.tgz
+COPY uuaid-agent-commons-0.2.0-alpha.2.tgz /app/package.tgz
 RUN npm install -g /app/package.tgz && rm /app/package.tgz
 USER node
 VOLUME ["/home/node/.agent-commons"]

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { AgentCommons,CommonsStore,CommonsCarrier,RegistryTrust,Keychain,CarrierClient,createProfile,encode,decode,seal,open,signDocument,verifyDocument,contribution,REQUIRED_STANDARDS,runAgentLoop } from "../src/index.mjs";
 import { initialize,loadRuntime } from "../src/config.mjs";
+import { leakedForms } from "./plaintext-leak.mjs";
 function key(){const k=new Keychain("unused");k._identity=Keychain.generate();return k}
 function setup(scope="local"){
   const keys=[key(),key(),key(),key()];
@@ -91,7 +92,10 @@ test("unadmitted and human-type identities are denied",async()=>{
 });
 test("Pillar sealed payloads are actually private and tamper evident",async()=>{
   const {runtimes:[a,b],profile}=setup();const sent=await a.send({recipient:b.uuaid,profileId:profile.id,body:"semantic equivalence"});
-  assert.equal(JSON.stringify(sent.envelope).includes("semantic equivalence"),false);assert.equal(open(sent.envelope).ok,true);
+  // Checks that the plaintext is absent as text, hex or base64 only; this is not a proof of confidentiality. The sealed
+  // payload carries encode(body, lexicon); the fixture lexicon is empty, so that wire form is the body itself.
+  assert.equal(encode("semantic equivalence",profile.lexicon),"semantic equivalence");
+  assert.deepEqual(leakedForms(JSON.stringify(sent.envelope),"semantic equivalence"),[]);assert.equal(open(sent.envelope).ok,true);
   assert.equal((await b.receive(sent.envelope)).body,"semantic equivalence");assert.equal((await b.receive(sent.envelope)).duplicate,true);
   const changed=structuredClone(sent.envelope);changed.enc.ct=(changed.enc.ct.startsWith("0")?"1":"0")+changed.enc.ct.slice(1);await assert.rejects(b.receive(changed),/Invalid Pillar envelope/);
 });

@@ -17,7 +17,8 @@ function setup(scope="local"){
 }
 test("published Pillar source subset matches provenance byte for byte",()=>{
   const manifest=JSON.parse(readFileSync(new URL("../PROVENANCE.json",import.meta.url)));
-  let tarballCount=0,localCount=0;
+  let tarballCount=0,from2ef548d=0,from8db6210=0;
+  const sourceOf8db6210=new Set(["groups-v2.mjs","groups.mjs"]);
   for(const [file,entry] of Object.entries(manifest.files)){
     const expectedHash=typeof entry==="string"?entry:entry.sha256;
     const actualHash=createHash("sha256").update(readFileSync(new URL(`../src/vendor/pillar/${file}`,import.meta.url))).digest("hex");
@@ -25,12 +26,16 @@ test("published Pillar source subset matches provenance byte for byte",()=>{
     if(typeof entry==="string"){
       tarballCount++;
     } else {
-      assert.equal(entry.source,"pillar commit 2ef548d (local, no remote - not published)");
-      localCount++;
+      const expectedSource=sourceOf8db6210.has(file)
+        ?"pillar commit 8db6210 (local, no remote - not published)"
+        :"pillar commit 2ef548d (local, no remote - not published)";
+      assert.equal(entry.source,expectedSource,`source mismatch for ${file}`);
+      if(sourceOf8db6210.has(file))from8db6210++;else from2ef548d++;
     }
   }
   assert.equal(tarballCount,7,"7 files from 2.0.2 tarball");
-  assert.equal(localCount,3,"3 files from 2ef548d local");
+  assert.equal(from2ef548d,3,"3 files from 2ef548d local");
+  assert.equal(from8db6210,2,"2 files from 8db6210 local");
   assert.equal(manifest.upstreamVersion,"2.0.2");
 });
 test("500 lossless alias/Unicode/control-token combinations",()=>{

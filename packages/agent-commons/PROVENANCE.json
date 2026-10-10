@@ -8,6 +8,14 @@
   "files": {
     "blob/blob.mjs": "6795e4fa34ca5ba0b9e13d8339ffdd504d3e003732a4b2190348855f6bb9d41c",
     "crypto/e2e.mjs": "538965c2834c7bae4c508fd203ae757c3e2a286c4395dc90b0f5131cc123f159",
+    "groups-v2.mjs": {
+      "sha256": "547e7824704e7af3c0438cd99db3793bda892c287b1db343740930ef917b8d7a",
+      "source": "pillar commit 8db6210 (local, no remote - not published)"
+    },
+    "groups.mjs": {
+      "sha256": "4019df0f33c4ff65dbf40bfbacc0a69fb4a9078219b84272052972140201f961",
+      "source": "pillar commit 8db6210 (local, no remote - not published)"
+    },
     "identity/jcs.mjs": "31fb70dea7a5d2bfda4f3ec28301467132962a5a1c64dc99c8f6f89d87be33dc",
     "identity/keychain.mjs": {
       "sha256": "a8fc75fa3d3305ed4b994e7c998b09314294b9552456a652e033bcfde4a39d9f",

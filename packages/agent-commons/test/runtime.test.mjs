@@ -93,7 +93,7 @@ test("Pillar sealed payloads are actually private and tamper evident",async()=>{
   const {runtimes:[a,b],profile}=setup();const sent=await a.send({recipient:b.uuaid,profileId:profile.id,body:"semantic equivalence"});
   assert.equal(JSON.stringify(sent.envelope).includes("semantic equivalence"),false);assert.equal(open(sent.envelope).ok,true);
   assert.equal((await b.receive(sent.envelope)).body,"semantic equivalence");assert.equal((await b.receive(sent.envelope)).duplicate,true);
-  const changed=structuredClone(sent.envelope);changed.enc.ct="00"+changed.enc.ct.slice(2);await assert.rejects(b.receive(changed),/Invalid Pillar envelope/);
+  const changed=structuredClone(sent.envelope);changed.enc.ct=(changed.enc.ct.startsWith("0")?"1":"0")+changed.enc.ct.slice(1);await assert.rejects(b.receive(changed),/Invalid Pillar envelope/);
 });
 test("unknown profile digests never silently downgrade to another decoder",async()=>{
   const {runtimes:[a,b],profile}=setup();const sent=await a.send({recipient:b.uuaid,profileId:profile.id,body:"semantic equivalence"});b.store.set("profiles",[]);

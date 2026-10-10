@@ -7,6 +7,9 @@ import { BASE_PROTOCOL, createProfile, verifyProfile, proposeAlias, encode, deco
 import { PillarCarrierTransport } from "./transport.mjs";
 import { classifyThread, assertChannelSendAdmission, assertChannelReceiveAdmission, validateTenantBinding } from "./channels.mjs";
 
+// D-12: only a string envelope id goes into an audit event; anything else a peer sends (absent, 1.5, an object) becomes null.
+const auditEnvelopeId=id=>typeof id==="string"?id:null;
+
 export class AgentCommons {
   // L3 Slice 2 v6 §2.1: options.transport and channel/tenant policy flags
   constructor({keychain,store=new CommonsStore(),policy={mode:"local",agents:{}},carriers=[],transport,trust}={}){
@@ -303,10 +306,14 @@ export class AgentCommons {
       for(const item of inbox.envelopes){
         // A carrier may not rewind or repeat sequence numbers within a response.
         if(!Number.isSafeInteger(item?.seq)||item.seq<=last){results.push({carrier,rejected:true,reason:"non-monotonic-carrier-sequence"});continue}
-        const valid=open(item?.envelope);
+        // D-12: open() can throw on peer input (it interpolates fields); a throw is one more invalid envelope, not a poll failure.
+        let valid;
+        try{valid=open(item?.envelope)}catch{valid={ok:false,reason:"validation-threw"}}
         if(!valid.ok){
-          results.push({id:item?.envelope?.id,rejected:true,reason:`Invalid Pillar envelope: ${valid.reason}`});
-          this.store.append(`rejected-${item?.envelope?.id}`,{kind:"quarantined-inbound",id:item?.envelope?.id,reason:`Invalid Pillar envelope: ${valid.reason}`});
+          // D-12: the peer's id is data inside the event, never the audit key; the cursor moves only after the audit write lands.
+          const id=auditEnvelopeId(item?.envelope?.id),reason=`Invalid Pillar envelope: ${typeof valid.reason==="string"?valid.reason:"invalid"}`;
+          results.push({id,rejected:true,reason});
+          this.store.append(randomUUID(),{kind:"quarantined-inbound",id,reason});
           last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
           continue;
         }
@@ -321,10 +328,16 @@ export class AgentCommons {
           if(error?.transient===true){
             // Trust backend outage is not a verdict on the sender: keep the cursor so the envelope is retried, and stop to preserve order.
             const failures=(health[carrier]?.failures??0)+1;health[carrier]={failures,nextProbeAt:Date.now()+Math.min(60000,1000*2**Math.min(failures,6)),error:error.code??"trust-unavailable"};this.store.set("carrierHealth",health);
-            this.store.append(`deferred-${item.envelope?.id}`,{kind:"inbound-deferred-trust-unavailable",id:item.envelope?.id});
-            results.push({id:item.envelope?.id,rejected:false,deferred:true,state:"trust-unavailable-retry",reason:error.code??"trust-unavailable"});break;
+            // D-12: JSON.stringify keeps the key one-to-one with id (null vs "null", lone surrogates), and the event is a
+            // function of id alone, so a retry rewrites the same row and two different ids never share a key. The
+            // "deferred/v2:" namespace keeps these keys apart from rows written as `deferred-${id}` before this change.
+            const id=auditEnvelopeId(item.envelope?.id);
+            this.store.append(`deferred/v2:${JSON.stringify(id)}`,{kind:"inbound-deferred-trust-unavailable",id});
+            results.push({id,rejected:false,deferred:true,state:"trust-unavailable-retry",reason:error.code??"trust-unavailable"});break;
           }
-          results.push({id:item.envelope?.id,rejected:true,reason:error.message});this.store.append(`rejected-${item.envelope?.id}`,{kind:"quarantined-inbound",id:item.envelope?.id,reason:error.message});
+          // D-12: a thrown value need not carry a string message; never serialize it into the audit.
+          const id=auditEnvelopeId(item.envelope?.id),reason=typeof error?.message==="string"?error.message:"receive-failed";
+          results.push({id,rejected:true,reason});this.store.append(randomUUID(),{kind:"quarantined-inbound",id,reason});
         }
         last=item.seq;cursors[carrier]=item.seq;this.store.set("cursors",cursors);
       }

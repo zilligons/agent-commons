@@ -146,7 +146,7 @@ export class SpacePolicy {
       previous=current;
     }
     const scanned=rec.chain.find(manifest=>manifest.version===state.outsiderScan.version);
-    const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:state.consent.manifestVersion;
+    const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:0;
     const unseen=rec.chain.filter(manifest=>manifest.version>scanVersion);
     const hit=unseen.some(manifest=>outsideAllowlist(manifest.members.filter(row=>row.status!=="removed"),this.allowlist));
     const from=state.outsiderScan,to={version:head.version,hash:manifestHash(head)};

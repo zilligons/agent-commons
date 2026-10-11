@@ -465,3 +465,49 @@ test("R2 direct emergency closure blocks every reopening path before file writes
   }
   await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
 });
+
+for(const variant of [
+  {name:"a",cursor:3,consent:6,invite:4,remove:5,accept:3},
+  {name:"b",cursor:5,consent:7,invite:3,remove:4,accept:5},
+  {name:"c",cursor:8,consent:6,invite:3,remove:4,accept:5},
+  {name:"d profile",cursor:3,consent:7,change:"profile",accept:4},
+  {name:"d tenant",cursor:3,consent:7,change:"tenant",accept:4},
+  {name:"e",cursor:99,consent:6,invite:4,remove:5,accept:3},
+])test(`R2c pole6 ${variant.name}: a native replacement scans outsiders from genesis only`,async t=>{
+  const f=fixture(t),commons=structuredClone(f.commons);
+  if(variant.change==="profile")commons.profile={id:"r2c-consented-profile",hash:"d".repeat(64)};
+  if(variant.change==="tenant")commons.tenant="r2c-consented-tenant";
+  // The old branch has already consented to any d-profile/tenant change.
+  for(let version=3;version<=9;version++){
+    if(version===3&&variant.change)signAndApplyNext(f.store,f.groupId,f.owner,"ext_update",{ext:{commons}});
+    else signAndApplyNext(f.store,f.groupId,f.owner,"rename",{name:`old branch ${version}`});
+  }
+  const old=f.store.loadRoster(f.groupId),state=adapter(f);
+  state.consent.manifestVersion=variant.consent;state.profile=structuredClone(commons.profile);
+  state.outsiderScan={version:variant.cursor,hash:manifestHash(old.chain.find(manifest=>manifest.version===(variant.cursor===99?3:variant.cursor)))};
+  f.store.saveAdapter(f.groupId,state);
+  // Same genesis/group, then divergence at v2, below every named cursor/consent.
+  const chain=[old.chain[0]];
+  const append=(action,opts)=>chain.push(signManifest(buildNext(chain.at(-1),action,opts),f.owner._identity));
+  append("rename",{name:"replacement divergence"});
+  for(let version=3;version<=9;version++){
+    if(version===variant.invite)append("invite",outsiderInvite(f));
+    else if(version===variant.remove)append("remove",{target:f.uid(f.outsider)});
+    else if(version===3&&variant.change)append("ext_update",{ext:{commons}});
+    else if(version===variant.accept)append("accept",{target:f.uid(f.member),request:"replacement-accept"});
+    else append("rename",{name:`replacement ${version}`});
+  }
+  f.store.saveRoster(newRecord(chain));const head=verifiedHead(f.store.loadRoster(f.groupId));assert.equal(head.version,9);
+  const atCursor=chain.find(manifest=>manifest.version===variant.cursor);
+  if(atCursor)assert.notEqual(manifestHash(atCursor),state.outsiderScan.hash);else assert.equal(variant.name,"e");
+  f.writer.rebuild();
+  assert.deepEqual(adapter(f).outsiderScan,{version:9,hash:manifestHash(head)});
+  assert.equal(adapter(f).softStop,null);assert.equal(f.signals.filter(signal=>signal.code==="SPACE_RECONSENT_REQUIRED").length,0);
+  if(variant.change){
+    assert.equal(adapter(f).hardStop,null);assert.equal(f.signals.length,0);assert.equal(f.policy.channels[f.content].members.length,2);assert.equal(Object.keys(f.policy.agents).length,3);
+    assert.deepEqual(adapter(f).profile,commons.profile);
+  }else{
+    assert.equal(adapter(f).hardStop?.reason,"outsider");assertClosed(f);assert.equal(f.signals.filter(signal=>signal.code==="SPACE_CLOSED").length,1);
+    await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+  }
+});

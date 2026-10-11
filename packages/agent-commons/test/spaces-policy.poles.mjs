@@ -54,7 +54,7 @@ const mutations=[
   ["C6-close-failure-skips-signal","R1 C-6 persistence",text=>replace(text,'  try{onSignal({code:"SPACE_CLOSED"','  if(outcome.error)throw outcome.error;\n  try{onSignal({code:"SPACE_CLOSED"')],
   ["M40-hard-resume-clears-soft","R1d-M40",text=>replace(text,'state.hardStop=null;this.store.saveAdapter','state.hardStop=null;state.softStop=null;this.store.saveAdapter')],
   ["M35b-latched-close-no-selfcheck","R1d-M35b",text=>replace(text,'if(latched(state)){Object.assign(policy,closed(state.groupId));checkPolicy(policy,rec,self,state,ext,allowlist,options);','if(latched(state)){Object.assign(policy,closed(state.groupId));')],
-  ["R2-cursor-follows-consent","R2 cursor resume",text=>replace(text,'const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:state.consent.manifestVersion;','const scanVersion=state.consent.manifestVersion;')],
+  ["R2-cursor-follows-consent","R2 cursor resume",text=>replace(text,'const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:0;','const scanVersion=state.consent.manifestVersion;')],
   ["R2-reconsent-moves-cursor","R1d-D1",text=>replace(text,'state.consent=structuredClone(consent);','state.outsiderScan={version:head.version,hash:manifestHash(head)};state.consent=structuredClone(consent);')],
   ["R2-hard-resume-jumps-cursor","R2 latched scan",text=>replace(text,'    if(!isDeepStrictEqual(state.outsiderScan,{version:head.version,hash:manifestHash(head)}))throw new PolicyError("OutsiderScanBehindError","Run rebuild first: outsider scan is behind the verified head");','    state.outsiderScan={version:head.version,hash:manifestHash(head)};')],
   ["R2-cursor-saved-before-latch","R2 cursor and outsider latch",text=>replace(text,'if(hit&&!latched(state))stop(this.policy,state,"outsider",this._options(now));','if(hit&&!latched(state)){this.store.saveAdapter(this.groupId,state);stop(this.policy,state,"outsider",this._options(now));}')],
@@ -70,6 +70,10 @@ const mutations=[
   ["R2-null-agent-not-guarded","R1d-D3",text=>replace(text,'keyBindsUuaid(uuaid,agent?.publicKey)','keyBindsUuaid(uuaid,agent.publicKey)')],
   ["R2-cursor-schema-unvalidated","R2 schema outsiderScan",text=>replace(text,'  if (!exactKeys(state.outsiderScan, OUTSIDER_SCAN_KEYS) || !posInt(state.outsiderScan.version) || !hex64(state.outsiderScan.hash)) throw badAdapter("outsiderScan: expected {version: positive safe integer, hash: 64-hex}");',''),"src/spaces/store.mjs"],
   ["R2-legacy-cursor-defaulted","R2 legacy adapter",text=>replace(text,'    validateAdapterState(parsed, id);','    parsed.outsiderScan??={version:parsed.consent.manifestVersion,hash:"a".repeat(64)};\n    validateAdapterState(parsed, id);'),"src/spaces/store.mjs"],
+  ["R2c-rescan-from-consent",["R2c pole6 a:","R2c pole6 b:","R2c pole6 c:"],text=>replace(text,'scanned.version:0;','scanned.version:state.consent.manifestVersion;')],
+  ["R2c-rescan-from-min",["R2c pole6 b:","R2c pole6 c:"],text=>replace(text,'scanned.version:0;','scanned.version:Math.min(state.outsiderScan.version,state.consent.manifestVersion);')],
+  ["R2c-p12-whole-chain",["R2c pole6 d profile:","R2c pole6 d tenant:"],text=>replace(text,'const after=rec.chain.filter(manifest=>manifest.version>state.consent.manifestVersion);','const after=rec.chain;')],
+  ["R2c-version-only",["R2c pole6 b:","R2c pole6 c:"],text=>replace(text,'scanned&&manifestHash(scanned)===state.outsiderScan.hash','scanned')],
 ];
 // Named equivalent/unobservable changes are observations, not distinguishing poles.
 const equivalents=[
@@ -82,9 +86,10 @@ function run(name,target,mutate,file="src/spaces/policy.mjs"){
   if(mutate){const path=join(root,file);writeFileSync(path,mutate(readFileSync(path,"utf8")))}
   const result=spawnSync(process.execPath,["--test","test/spaces-policy.test.mjs","test/spaces-store.test.mjs"],{cwd:root,encoding:"utf8",timeout:30000});
   const count=label=>Number(result.stdout.match(new RegExp(`# ${label} (\\d+)`))?.[1]??0),log=join(root,"result.log");writeFileSync(log,result.stdout+result.stderr);
-  if(result.signal||result.error||count("tests")!==111||count("cancelled")!==0)throw new Error(`Pole did not complete: ${name}; ${log}`);
+  if(result.signal||result.error||count("tests")!==117||count("cancelled")!==0)throw new Error(`Pole did not complete: ${name}; ${log}`);
   const failures=[...result.stdout.matchAll(/^not ok \d+ - (.+)$/gm)].map(match=>match[1]);
-  return {name,target,rc:result.status,tests:count("tests"),pass:count("pass"),fail:count("fail"),failures,intendedFailureObserved:target?failures.some(f=>f.startsWith(target)):null,log};
+  const targets=Array.isArray(target)?target:[target];
+  return {name,target,rc:result.status,tests:count("tests"),pass:count("pass"),fail:count("fail"),failures,intendedFailureObserved:target?targets.every(prefix=>failures.some(f=>f.startsWith(prefix))):null,log};
 }
 const control=run("CONTROL"),mutants=mutations.map(([name,target,mutate,file])=>run(name,target,mutate,file));
 const equivalentObservations=equivalents.map(([name,mutate])=>({...run(name,null,mutate),classification:"equivalent or unobservable; not a distinguishing pole"}));

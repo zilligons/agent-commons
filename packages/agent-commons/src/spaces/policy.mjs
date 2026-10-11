@@ -11,7 +11,7 @@ export class PolicyError extends Error {
 }
 export function assertPolicyIdentity(engine){
   const policy=engine?.policy,prototype=policy&&Object.getPrototypeOf(policy);
-  if(policy===null||typeof policy!=="object"||(prototype!==Object.prototype&&prototype!==null)||Object.isFrozen(policy)||policy!==engine?.trust?.policy){
+  if(policy===null||typeof policy!=="object"||(prototype!==Object.prototype&&prototype!==null)||Object.isFrozen(policy)||!Object.isExtensible(policy)||policy!==engine?.trust?.policy){
     throw new PolicyError("PolicyIdentityError","Engine and trust must share one mutable plain policy object");
   }
   return policy;
@@ -21,9 +21,22 @@ function closed(groupId){
   const uris=channels(groupId);
   return {mode:"local",channelsEnabled:true,holdBeforeAdmission:true,agents:{},tenantProfiles:{},channels:{[uris.content]:{members:[]},[uris.control]:{members:[]}}};
 }
+function outsideAllowlist(rows,allowlist){
+  return rows.find(row=>!allowlist.some(allowed=>allowed.uuaid===row.uuaid&&allowed.key===row.key));
+}
 function outsider(rec,state,allowlist){
   const head=verifiedHead(rec),rows=[...head.members.filter(row=>row.status!=="removed"),...state.pendingRemovals];
-  return rows.find(row=>!allowlist.some(allowed=>allowed.uuaid===row.uuaid&&allowed.key===row.key));
+  return outsideAllowlist(rows,allowlist);
+}
+function closePolicies(policy,groupId,engine){
+  let failure;
+  for(const candidate of new Set([policy,engine?.policy,engine?.trust?.policy])){
+    if(candidate===null||typeof candidate!=="object")continue;
+    const prototype=Object.getPrototypeOf(candidate);
+    if(prototype!==Object.prototype&&prototype!==null)continue;
+    try{Object.assign(candidate,closed(groupId))}catch(error){failure??=error}
+  }
+  if(failure)throw failure;
 }
 function expectedPolicy(rec,self,state,ext,now){
   if(latched(state))return closed(state.groupId);
@@ -42,15 +55,18 @@ function expectedPolicy(rec,self,state,ext,now){
   const uris=channels(state.groupId);
   return {mode:"local",channelsEnabled:true,holdBeforeAdmission:true,agents,tenantProfiles,channels:{[uris.content]:{members:content},[uris.control]:{members:control}}};
 }
-function stop(policy,state,reason,{store,onSignal=()=>{},now=Date.now()}={}){
-  state.hardStop={reason,at:now};
-  Object.assign(policy,closed(state.groupId));
-  store.saveAdapter(state.groupId,state);
-  onSignal({code:"SPACE_CLOSED",groupId:state.groupId,reason,at:now});
+function stop(policy,state,reason,{engine,store,onSignal=()=>{},now=Date.now()}={}){
+  if(state.hardStop===null)state.hardStop={reason,at:now};
+  try{store.saveAdapter(state.groupId,state)}finally{
+    try{closePolicies(policy,state.groupId,engine)}finally{
+      onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});
+    }
+  }
   return false;
 }
 /** P-9 reads the verified files again; a policy file is never an input. */
 export function checkPolicy(policy,rec,self,state,ext,allowlist,options){
+  // rec, ext and allowlist remain for caller compatibility; the check reads the persisted inputs again.
   const {engine,store,now=Date.now()}=options;
   const loaded=store.loadAdapter(state.groupId,{now});
   const saved=store.loadRoster(state.groupId),savedState=loaded?.state;
@@ -77,6 +93,7 @@ export class SpacePolicy {
     this.engine=engine;this.store=store;this.groupId=groupId;this.self=engine.keychain;
     this.allowlist=allowlist;this.onSignal=onSignal;this.clock=clock;
     if(!Array.isArray(allowlist))throw new PolicyError("AllowlistError","An explicit operator allowlist is required");
+    Object.assign(this.policy,closed(this.groupId));
     this.rebuild();
   }
   _load(){
@@ -86,6 +103,7 @@ export class SpacePolicy {
   }
   _options(now){return {engine:this.engine,store:this.store,onSignal:this.onSignal,now}}
   rebuild(){
+    try{
     const {rec,state,now}=this._load();
     if(latched(state))writePolicy(this.policy,rec,this.self,state,null,this.allowlist,this._options(now));
     if(!rec){if(latched(state))return this.policy;throw new PolicyError("RosterAbsentError","No verified roster for policy rebuild")}
@@ -95,6 +113,7 @@ export class SpacePolicy {
     let previous=rec.chain.find(manifest=>manifest.version===state.consent.manifestVersion)?.ext.commons;
     if(!previous)throw new PolicyError("ConsentHeadError","Consent must name a verified manifest version");
     for(const manifest of after){
+      if(!latched(state)&&outsideAllowlist(manifest.members.filter(row=>row.status!=="removed"),this.allowlist))stop(this.policy,state,"outsider",this._options(now));
       const current=manifest.ext.commons;
       if(!isDeepStrictEqual(previous.profile,current.profile)||previous.tenant!==current.tenant){
         if(state.softStop===null){state.softStop={reason:"reconsent",at:now};this.store.saveAdapter(this.groupId,state);this.onSignal({code:"SPACE_RECONSENT_REQUIRED",groupId:this.groupId,at:now})}
@@ -102,10 +121,20 @@ export class SpacePolicy {
       previous=current;
     }
     return writePolicy(this.policy,rec,this.self,state,head.ext.commons,this.allowlist,this._options(now));
+    }catch(error){
+      try{closePolicies(this.policy,this.groupId,this.engine)}catch{} // retain the original read/write failure
+      throw error;
+    }
   }
+  /** Call after rebuild(), including after pending TTL expiry; the adapter owns the expiry timer. */
   check(){
+    try{
     const {rec,state,now}=this._load();
     return checkPolicy(this.policy,rec,this.self,state,latched(state)?null:verifiedHead(rec).ext.commons,this.allowlist,this._options(now));
+    }catch(error){
+      try{closePolicies(this.policy,this.groupId,this.engine)}catch{}
+      throw error;
+    }
   }
   hardResume(){
     const {rec,state,now}=this._load();verifiedHead(rec);selfCheck(this.self,rec);
@@ -133,8 +162,9 @@ export class SpacePolicy {
       validateAdapterState(nextState,this.groupId); // preflight before either file write
     }
     const result=signAndApplyNext(this.store,this.groupId,this.self,action,buildOpts);
+    try{
     if(nextState!==state)this.store.saveAdapter(this.groupId,nextState);
-    this.rebuild();
+    }finally{this.rebuild()}
     return result;
   }
 }

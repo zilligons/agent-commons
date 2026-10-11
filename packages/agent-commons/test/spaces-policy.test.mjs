@@ -103,8 +103,8 @@ for(const change of ["profile","tenant"])test(`HS-1..4 hard stop survives ${chan
   receivedChange(f,"remove",{target:f.uid(f.outsider)});f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(Object.keys(f.policy.agents).length,3);
 });
 test("HS-3 hard resume retains an outstanding soft stop",t=>{
-  const f=fixture(t);receivedChange(f,"invite",{member:{uuaid:f.uid(f.outsider),key:f.key(f.outsider)}});
-  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});receivedChange(f,"remove",{target:f.uid(f.outsider)});
+  const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();
+  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});
   f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(adapter(f).softStop.reason,"reconsent");assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.length,3);
 });
 test("HS-2 reconsent of a safe head cannot clear the earlier hard latch",t=>{
@@ -165,4 +165,144 @@ test("P-8 freeze uses only known non-removed control and no pending recipients",
   const rec=f.store.loadRoster(f.groupId),head=verifiedHead(rec);
   rec.frozen={manifests:["a","b"].map(name=>signManifest(buildNext(head,"rename",{name}),f.owner._identity))};f.store.saveRoster(rec);f.writer.rebuild();
   assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.includes(f.uid(f.member)),false);assert.equal(f.policy.channels[f.control].members.length,2);
+});
+
+const sorted=a=>[...a].sort();
+const outsiderInvite=f=>({member:{uuaid:f.uid(f.outsider),key:f.key(f.outsider)}});
+test("G1 content = active minus leavers; control = active + invited (positive composition)",t=>{
+  const f=fixture(t);
+  assert.deepEqual(sorted(f.policy.channels[f.content].members),sorted([f.uid(f.owner),f.uid(f.member)]));
+  assert.deepEqual(sorted(f.policy.channels[f.control].members),sorted([f.uid(f.owner),f.uid(f.member),f.uid(f.invited)]));
+  assert.equal(f.policy.channels[f.content].members.includes(f.uid(f.invited)),false);
+});
+test("G2 tenant binds every record and tenantProfiles; a null tenant leaves both absent",t=>{
+  const f=fixture(t);
+  assert.deepEqual(f.policy.tenantProfiles,{});for(const a of Object.values(f.policy.agents))assert.equal("tenantId" in a,false);
+  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"tenant-x"}}});
+  assert.deepEqual(f.policy.tenantProfiles,{[f.profile.id]:"tenant-x"});assert.equal(Object.keys(f.policy.agents).length,3);
+  for(const a of Object.values(f.policy.agents))assert.equal(a.tenantId,"tenant-x");
+  assert.equal(f.writer.check(),true);
+});
+test("G3 reconsent naming a stale or future manifest refuses and writes nothing",t=>{
+  const f=fixture(t);receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"t2"}}});
+  const before=readFileSync(f.store.adapterPath(f.groupId));
+  for(const v of [2,99])assert.throws(()=>f.writer.reconsent({...adapter(f).consent,manifestVersion:v}),{name:"ConsentHeadError"});
+  assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),before);assert.equal(adapter(f).softStop.reason,"reconsent");
+});
+test("G4 mode, channelsEnabled and holdBeforeAdmission are fixed in the open and the closed form",t=>{
+  const f=fixture(t),fixed=p=>{assert.equal(p.mode,"local");assert.equal(p.channelsEnabled,true);assert.equal(p.holdBeforeAdmission,true)};
+  fixed(f.policy);receivedChange(f,"invite",outsiderInvite(f));fixed(f.policy);assertClosed(f);
+});
+test("G5 SPACE_RECONSENT_REQUIRED is raised exactly once per stop across revert and restart",t=>{
+  const f=fixture(t);receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"t2"}}});
+  receivedChange(f,"ext_update",{ext:{commons:f.commons}});new SpacePolicy(f.options);
+  const s=f.signals.filter(x=>x.code==="SPACE_RECONSENT_REQUIRED");assert.equal(s.length,1);assert.equal(s[0].groupId,f.groupId);
+});
+test("G6 a hash-only profile change (same id) sets the soft stop",t=>{
+  const f=fixture(t),next=structuredClone(f.commons);next.profile={id:f.profile.id,hash:"f".repeat(64)};
+  receivedChange(f,"ext_update",{ext:{commons:next}});assert.equal(adapter(f).softStop.reason,"reconsent");assert.deepEqual(f.policy.channels[f.content].members,[]);
+});
+test("G7 hardResume refuses while a pending removal is outside the allowlist",t=>{
+  const f=fixture(t);f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"pending-outsider"});
+  f.allowlist.splice(f.allowlist.findIndex(r=>r.uuaid===f.uid(f.member)),1);f.writer.rebuild();assert.equal(adapter(f).hardStop.reason,"outsider");
+  assert.throws(()=>f.writer.hardResume(),{name:"OutsiderError"});assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);
+  f.allowlist.push({uuaid:f.uid(f.member),key:f.key(f.member)});f.writer.hardResume();assert.equal(adapter(f).hardStop,null);
+});
+test("G8 a consent naming a version outside the verified chain refuses the rebuild",t=>{
+  const f=fixture(t),s=adapter(f);s.consent={...s.consent,manifestVersion:99};f.store.saveAdapter(f.groupId,s);
+  assert.throws(()=>f.writer.rebuild(),{name:"ConsentHeadError"});
+});
+test("G9 the close signal carries code, group, reason and time",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));
+  const e=f.signals.find(x=>x.code==="SPACE_CLOSED");assert.ok(e);assert.deepEqual(Object.keys(e).sort(),["at","code","groupId","reason"]);
+  assert.equal(e.groupId,f.groupId);assert.equal(e.reason,"outsider");assert.equal(e.at,adapter(f).hardStop.at);
+});
+test("G10 a keychain absent from the verified head refuses construction",t=>{
+  const f=fixture(t),engine=new AgentCommons({keychain:f.outsider,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());
+  assert.throws(()=>new SpacePolicy({...f.options,engine}),{name:"SelfCheckError"});
+});
+test("G11 engine.policy reassigned to another object closes and latches",t=>{
+  const f=fixture(t);f.engine.policy={...f.policy};
+  assert.equal(f.writer.check(),false);assert.equal(adapter(f).hardStop.reason,"policy-mismatch");
+});
+test("G12 reconsent records the head profile and the current manifest in adapter state",t=>{
+  const f=fixture(t),next=structuredClone(f.commons);next.profile={id:"new-profile",hash:"d".repeat(64)};
+  receivedChange(f,"ext_update",{ext:{commons:next}});f.writer.reconsent(consent(f));
+  assert.deepEqual(adapter(f).profile,next.profile);assert.equal(adapter(f).consent.manifestVersion,3);
+});
+test("G13 rebuild itself runs the P-9 self-check after its write",t=>{
+  const f=fixture(t);f.engine.trust.policy={...f.policy};f.writer.rebuild();assert.equal(adapter(f).hardStop?.reason,"policy-mismatch");
+});
+test("G15 a restart under a latch writes CLOSED directly and keeps the original stop",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const hard=adapter(f).hardStop,before=f.signals.length;
+  const seeded=new AgentCommons({keychain:f.owner,policy:{mode:"local",agents:Object.fromEntries(f.keys.slice(0,3).map(k=>[f.uid(k),{kind:"agent",publicKey:f.key(k),capabilities:["commons:message"]}]))}});t.after(()=>seeded.store.close());
+  new SpacePolicy({...f.options,engine:seeded});
+  assert.deepEqual(adapter(f).hardStop,hard);assert.equal(f.signals.length,before);assert.deepEqual(seeded.policy.agents,{});
+  assert.deepEqual(seeded.policy.channels,{[f.content]:{members:[]},[f.control]:{members:[]}});
+});
+
+for(const reference of ["trust","engine"])test(`R1 C-1 ${reference} identity swap closes every gate policy`,async t=>{
+  const f=fixture(t),copy={...f.policy};
+  if(reference==="trust")f.engine.trust.policy=copy;else f.engine.policy=copy;
+  assert.equal(f.writer.check(),false);assertClosed(f);assert.deepEqual(copy.agents,{});
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R1 C-2 adapter write failure narrows the same process before rethrow",async t=>{
+  const f=fixture(t),failure=new Error("adapter write failed");f.store.saveAdapter=()=>{throw failure};
+  assert.throws(()=>f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"r1-c2"}),e=>e===failure);
+  assert.equal(verifiedHead(f.store.loadRoster(f.groupId)).members.find(r=>r.uuaid===f.uid(f.member)).status,"removed");
+  assert.equal(f.policy.agents[f.uid(f.member)],undefined);assert.equal(f.policy.channels[f.content].members.includes(f.uid(f.member)),false);
+  assert.equal(adapter(f).pendingRemovals.length,0);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R1 C-3 an intermediate outsider since consent latches even after its removal",t=>{
+  const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  f.writer.rebuild();assertClosed(f);assert.equal(adapter(f).hardStop.reason,"outsider");assert.equal(f.signals.filter(s=>s.code==="SPACE_CLOSED").length,1);
+  const hard=adapter(f).hardStop;new SpacePolicy(f.options);assert.deepEqual(adapter(f).hardStop,hard);assertClosed(f);
+  f.writer.hardResume();assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);
+  f.writer.reconsent(consent(f));assert.equal(adapter(f).hardStop.reason,"outsider");f.writer.hardResume();assert.equal(adapter(f).hardStop,null);
+});
+for(const method of ["rebuild","check"])test(`R1 C-4 missing roster closes on ${method} failure without a latch`,t=>{
+  const f=fixture(t);rmSync(f.store.rosterPath(f.groupId));assert.throws(()=>f.writer[method]());assertClosed(f);assert.equal(adapter(f).hardStop,null);assert.equal(f.signals.length,0);
+});
+test("R1 C-4 constructor closes a pre-seeded policy before a read fails",t=>{
+  const f=fixture(t);rmSync(f.store.rosterPath(f.groupId));
+  const load=f.store.loadAdapter.bind(f.store);f.store.loadAdapter=(...args)=>{assertClosed(f);return load(...args)};
+  assert.throws(()=>new SpacePolicy(f.options),{name:"RosterAbsentError"});assertClosed(f);assert.equal(adapter(f).hardStop,null);assert.equal(f.signals.length,0);
+});
+for(const method of ["rebuild","check"])test(`R1 C-4 adapter read throw closes on ${method} failure`,t=>{
+  const f=fixture(t),failure=new Error("adapter read failed");f.store.loadAdapter=()=>{throw failure};
+  assert.throws(()=>f.writer[method](),e=>e===failure);assertClosed(f);assert.equal(f.signals.length,0);
+});
+test("R1 C-6 a second mismatch preserves the first hard-stop reason and time",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const hard=adapter(f).hardStop;f.advance(5000);
+  f.policy.agents[f.uid(f.member)]={kind:"agent",publicKey:f.key(f.member),capabilities:["commons:message"]};
+  assert.equal(f.writer.check(),false);assert.deepEqual(adapter(f).hardStop,hard);assertClosed(f);
+  assert.deepEqual(f.signals.at(-1),{code:"SPACE_CLOSED",groupId:f.groupId,...hard});
+});
+test("R1 C-6 persistence precedes a failing close and the signal still runs",t=>{
+  const f=fixture(t);Object.freeze(f.policy);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));
+  f.writer.onSignal=event=>{assert.equal(adapter(f).hardStop.reason,"outsider");f.signals.push(event)};
+  assert.throws(()=>f.writer.rebuild(),TypeError);assert.equal(adapter(f).hardStop.reason,"outsider");assert.equal(f.signals.length,1);
+});
+test("R1 C-1/C-6 a throwing close does not skip distinct engine and trust objects",t=>{
+  const f=fixture(t),engineCopy={...f.policy},trustCopy={...f.policy};f.engine.policy=engineCopy;f.engine.trust.policy=trustCopy;
+  Object.defineProperty(f.policy,"mode",{set(){throw new Error("close failed")},get(){return "local"},configurable:true});
+  assert.throws(()=>f.writer.check(),/close failed/);assert.deepEqual(engineCopy.agents,{});assert.deepEqual(trustCopy.agents,{});
+  assert.equal(adapter(f).hardStop.reason,"policy-mismatch");assert.equal(f.signals.length,1);
+});
+for(const kind of ["sealed","non-extensible"])test(`R1 C-6 I-1 refuses a ${kind} policy before a read`,t=>{
+  const f=fixture(t);if(kind==="sealed")Object.seal(f.policy);else Object.preventExtensions(f.policy);
+  let reads=0;f.store.loadAdapter=()=>{reads++;throw new Error("unexpected read")};
+  assert.throws(()=>new SpacePolicy(f.options),{name:"PolicyIdentityError"});assert.equal(reads,0);
+});
+test("R1 C-5 pending TTL uses rebuild then check without a false hard latch",t=>{
+  const f=fixture(t);f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"r1-ttl"});f.advance(PENDING_TTL_MS+1);
+  f.writer.rebuild();assert.equal(f.writer.check(),true);assert.equal(f.policy.agents[f.uid(f.member)],undefined);assert.equal(adapter(f).hardStop,null);
+});
+
+test("G15 latched rebuild closes directly without another signal",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const before=f.signals.length,hard=adapter(f).hardStop;
+  f.policy.agents[f.uid(f.member)]={kind:"agent",publicKey:f.key(f.member),capabilities:["commons:message"]};
+  f.writer.rebuild();assertClosed(f);assert.equal(f.signals.length,before);assert.deepEqual(adapter(f).hardStop,hard);
 });

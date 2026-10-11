@@ -133,9 +133,16 @@ test("P1 CONTROL: a non-finite clock keeps nothing — undefined, NaN and 'abc' 
       assert.equal(out.state.pendingRemovals.length, 0, `loadAdapter now=${String(bad)} keeps 0`);
       assert.deepEqual(out.dropped.map((d) => d.reason), ["bad-clock"]);
     }
-    // An absent option falls back to the real clock. The fixture's queuedAt is in 2027,
-    // i.e. ahead of the real clock, so the entry must not be kept either (future-stamp).
-    assert.equal(store.loadAdapter(groupId, {}).state.pendingRemovals.length, 0);
+    // An absent option falls back to the REAL clock, so pin it with a real-clock entry.
+    // (The 1_800_000_000_000 fixture stamp is 2027-01-15T07:59:59Z: a window check
+    // against it would fail for the hour after that instant, so it cannot pin a
+    // default-clock read.) Re-stamp the removed member at Date.now()-1000 and require
+    // both a bare call and an empty options object to keep exactly 1.
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, Date.now()));
+    assert.equal(store.loadAdapter(groupId).state.pendingRemovals.length, 1,
+      "a bare load keeps a real-clock entry (the default clock is Date.now(), not undefined)");
+    assert.equal(store.loadAdapter(groupId, {}).state.pendingRemovals.length, 1,
+      "an absent `now` option falls back to the real clock and keeps the entry");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -147,7 +154,9 @@ test("P1 CONTROL: a clock that is finite but not a safe integer keeps nothing �
   // Number.isFinite accepts all three; Number.isSafeInteger must not. A fractional clock
   // compares loosely against an integer stamp, and a value past 2**53-1 cannot represent
   // the 1 ms the window is decided by, so neither can pin the TTL bound exactly.
-  for (const bad of [now0 + 0.5, 2 ** 60, Number.MAX_SAFE_INTEGER + 2]) {
+  // A numeric string is finite and `Number()` would coerce it to a safe integer, so it
+  // is the exact class a `Number(now)` guard would silently admit. It must not be.
+  for (const bad of [String(now0), now0 + 0.5, 2 ** 60, Number.MAX_SAFE_INTEGER + 2]) {
     const { kept, dropped } = prunePendingRemovals([fresh], rec, bad);
     assert.equal(kept.length, 0, `now=${String(bad)} keeps 0 entries`);
     assert.deepEqual(dropped.map((d) => d.reason), ["bad-clock"], `now=${String(bad)} drops as bad-clock`);
@@ -348,6 +357,70 @@ test("P3 CONTROL: saveAdapter tightens a pre-existing spaces/ at 0755 to 0700", 
 });
 
 // ── only ENOENT means absent: a non-ENOENT read failure must THROW ─────────
+
+test("P5 CONTROL: a pre-existing 0755 spaces/ plus saveRoster ends at 0700", () => {
+  const home = mkHome();
+  try {
+    const { rec } = fixtureRoster();
+    const store = new SpaceStore(home);
+    mkdirSync(store.spacesHome, { mode: 0o755 });
+    chmodSync(store.spacesHome, 0o755); // mkdirSync's mode is umask-filtered; pin it
+    assert.equal(mode(store.spacesHome), 0o755, "precondition: spaces/ starts at 0755");
+    store.saveRoster(rec);
+    assert.equal(mode(store.spacesHome), 0o700, "saveRoster tightens spaces/ to 0700");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P5 CONTROL: saveAdapter with a string queuedAt throws AdapterStateError and writes nothing", () => {
+  const { groupId, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const state = fixtureAdapter(groupId, m1, now);
+  // The disk-side validator is the first copy of the safe-integer check; the pruning
+  // guard is only defense in depth behind it. A numeric string must be refused at save.
+  state.pendingRemovals[0].queuedAt = String(now - 1000);
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    assert.throws(() => store.saveAdapter(groupId, state), { name: "AdapterStateError" });
+    assert.equal(existsSync(store.spacesHome), false, "a refused saveAdapter creates no spaces/");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P5 CONTROL: a mode-000 grp dir makes loadAdapter throw AdapterStateError (EACCES is not absence)", { skip: process.getuid() === 0 && "root bypasses mode 000" }, () => {
+  const home = mkHome();
+  const { rec, groupId, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const store = new SpaceStore(home);
+  store.saveRoster(rec);
+  // A latched hardStop sits on disk; an EACCES-as-absent read would return null and
+  // lose it, widening authority (CL-1, HS-1).
+  store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now, { hardStop: { reason: "outsider", at: now } }));
+  const dir = store.groupDir(groupId);
+  try {
+    chmodSync(dir, 0o000);
+    assert.throws(() => store.loadAdapter(groupId, { now }),
+      (e) => e instanceof SpaceStoreError && e.name === "AdapterStateError" && /EACCES/.test(e.message),
+      "a mode-000 grp dir throws AdapterStateError naming EACCES, never reads as null");
+  } finally {
+    chmodSync(dir, 0o700);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("P5 CONTROL: a mode-000 spaces/ makes loadDispatcher throw DispatcherStateError (EACCES is not empty cursors)", { skip: process.getuid() === 0 && "root bypasses mode 000" }, () => {
+  const home = mkHome();
+  const store = new SpaceStore(home);
+  store.saveDispatcher({ v: DISPATCHER_V, cursors: { "carrier://pole/one": 5 } });
+  try {
+    chmodSync(store.spacesHome, 0o000);
+    assert.throws(() => store.loadDispatcher(),
+      (e) => e instanceof SpaceStoreError && e.name === "DispatcherStateError" && /EACCES/.test(e.message),
+      "a mode-000 spaces/ throws DispatcherStateError naming EACCES, never reads as empty");
+  } finally {
+    chmodSync(store.spacesHome, 0o700);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("P5 CONTROL: grp-<id> replaced by a regular file makes loadAdapter throw AdapterStateError, never null (CL-1, HS-1)", () => {
   const home = mkHome();

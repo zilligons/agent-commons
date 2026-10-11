@@ -144,9 +144,11 @@ function atomicWrite0600(filePath, text) {
  * Every clause is written KEEP-ONLY-IF, never drop-if: a keep widens policy
  * (P-7 puts pending rows into `agents`), so anything this function cannot
  * positively prove in-window is dropped. That includes a clock it cannot
- * compare with: a non-finite `now` (undefined, NaN, a string) drops every entry
- * as `bad-clock`, because each comparison against it is false and a negated
- * clause would read that as "in window".
+ * compare with: a `now` that is not a safe integer (undefined, NaN, a string,
+ * a fraction, a value past 2^53-1) drops every entry as `bad-clock`, and an
+ * entry whose own `queuedAt` is not a safe integer drops as `bad-entry`,
+ * because each comparison against such a value is false or coerced and a
+ * negated clause would read that as "in window".
  */
 export function prunePendingRemovals(entries, rec, now) {
   const kept = [];
@@ -182,10 +184,17 @@ export function prunePendingRemovals(entries, rec, now) {
       }
       // (c) the 1-hour window, and no future stamp. KEEP-ONLY-IF: the clause is
       // written as the positive keep condition, so a `now` that cannot be compared
-      // (undefined, NaN, a string) drops as `bad-clock` instead of keeping. Written as
-      // "drop if X", both comparisons are false for a non-finite `now`, which reads as
-      // "in window" and keeps a removed member authorized past the 1-hour bound.
-      if (reason === null && !Number.isFinite(now)) reason = "bad-clock";
+      // (undefined, NaN, a string, a fraction, a value past 2^53-1) drops as
+      // `bad-clock` instead of keeping. Written as "drop if X", both comparisons are
+      // false for such a `now`, which reads as "in window" and keeps a removed member
+      // authorized past the 1-hour bound. A safe integer is required, not merely a
+      // finite one: `Number.isFinite(now0 + 0.5)` is true, yet a fractional clock
+      // compares loosely against an integer stamp and cannot pin the window exactly.
+      // The entry's own stamp is held to the same bar — this function is exported and
+      // trusts its arguments, so an in-memory entry (a later slice's policy writer) can
+      // reach it with a string `queuedAt` that `<=` and `-` would silently coerce.
+      if (reason === null && !Number.isSafeInteger(now)) reason = "bad-clock";
+      else if (reason === null && !Number.isSafeInteger(e.queuedAt)) reason = "bad-entry";
       else if (reason === null && !(e.queuedAt <= now && now - e.queuedAt <= PENDING_TTL_MS)) {
         reason = e.queuedAt > now ? "future-stamp" : "expired";
       }

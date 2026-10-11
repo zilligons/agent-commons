@@ -139,6 +139,34 @@ test("P1 CONTROL: a non-finite clock keeps nothing — undefined, NaN and 'abc' 
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test("P1 CONTROL: a clock that is finite but not a safe integer keeps nothing — a fraction, 2**60 and MAX_SAFE_INTEGER+2 each drop as bad-clock", () => {
+  const { rec, m1 } = fixtureRoster();
+  const now0 = 1_800_000_000_000;
+  const fresh = { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now0 - 1000, outboxId: "ob-safe" };
+  assert.equal(prunePendingRemovals([fresh], rec, now0).kept.length, 1, "control: a safe-integer clock keeps it");
+  // Number.isFinite accepts all three; Number.isSafeInteger must not. A fractional clock
+  // compares loosely against an integer stamp, and a value past 2**53-1 cannot represent
+  // the 1 ms the window is decided by, so neither can pin the TTL bound exactly.
+  for (const bad of [now0 + 0.5, 2 ** 60, Number.MAX_SAFE_INTEGER + 2]) {
+    const { kept, dropped } = prunePendingRemovals([fresh], rec, bad);
+    assert.equal(kept.length, 0, `now=${String(bad)} keeps 0 entries`);
+    assert.deepEqual(dropped.map((d) => d.reason), ["bad-clock"], `now=${String(bad)} drops as bad-clock`);
+  }
+});
+
+test("P1 CONTROL: an entry stamp that is not a safe integer keeps nothing — a numeric string, a fraction and NaN each drop as bad-entry", () => {
+  const { rec, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const at = (queuedAt, outboxId) => ({ uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt, outboxId });
+  // The disk path cannot carry these (validateAdapterState requires a safe-integer
+  // queuedAt), but prunePendingRemovals is exported and a later slice may hand it
+  // in-memory entries. `<=` and `-` would coerce a numeric string and keep it.
+  const entries = [at(String(now - 1000), "str"), at(now - 1000.5, "frac"), at(NaN, "nan")];
+  const { kept, dropped } = prunePendingRemovals(entries, rec, now);
+  assert.equal(kept.length, 0, "no non-safe-integer stamp is kept");
+  assert.deepEqual(dropped.map((d) => [d.entry.outboxId, d.reason]), [["str", "bad-entry"], ["frac", "bad-entry"], ["nan", "bad-entry"]]);
+});
+
 test("P1 CONTROL: the manifest-ahead-of-head guard fires on a hand-built out-of-order chain", () => {
   // Unreachable on a VERIFIED record (verifyChain forces contiguous 1..N), but
   // prunePendingRemovals is exported and trusts its `rec`, so a synthetic chain reaches it.

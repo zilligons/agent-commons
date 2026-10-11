@@ -10,13 +10,17 @@
  * B-4 (full-uuaid keys enforce the namespace at the engine trust gate), B-6
  * (self check) and V-7's unit-level ASCII-key guard.
  *
+ * R1: the admin change is the VENDORED `adminChange` (V-1, "vendor, don't
+ * write"), so a frozen record is refused and a leave/remove clears the target
+ * from `leaving` exactly as pillar's reference does (groups-v2.mjs:534, :541).
+ *
  * Deferred by design, NOT stubbed: P-7 (a remove/leave manifest adds the
  * pendingRemovals entry in the same step — slice 7, spans adapter.json),
  * the sends themselves (slice 8), V-7's send/receive wiring (slices 8/9),
  * B-5's transport-key snapshot (slices 5/8).
  */
 import {
-  adminOf, buildNext, keyBindsUuaid, manifestHash, signManifest,
+  adminChange, adminOf, keyBindsUuaid, manifestHash,
   uuaidForKey, verifyChain,
 } from "./pillar-group.mjs";
 
@@ -92,23 +96,44 @@ export function selfCheck(keychain, rec) {
 // ── V-6: the admin signer (sign → verify → own-store-save → return) ──────
 
 /**
+ * The store the vendored `adminChange` writes through: SpaceStore's own
+ * roster load/save, so `loadRoster`'s absent-means-null (F13) and
+ * `saveRoster`'s verify-before-create plus 0700 tightening (S-1) are the only
+ * path to disk. `loadGroupForCommand` needs has/load; :542 needs save.
+ */
+function rosterStoreFor(store) {
+  return {
+    has: (id) => store.loadRoster(id) !== null,
+    load: (id) => {
+      const r = store.loadRoster(id);
+      if (!r) throw new ManifestError("RosterAbsentError", `no verified roster for ${String(id)}`);
+      return r;
+    },
+    save: (rec) => store.saveRoster(rec), // OWN STORE FIRST (S-1: refuses an unverified record)
+  };
+}
+
+/**
  * Build, sign and apply the next manifest to the ADMIN's own store, then
  * return it for the caller to send (the send itself is slice 8 — this never
  * sends). Order is load-bearing:
  *   1. load through SpaceStore.loadRoster, which re-verifies (F13, V-3);
  *   2. explicit verifiedHead (V-3) and selfCheck (B-6);
  *   3. the signer must be the head's single active admin (F14);
- *   4. buildNext (vendored builder) + signManifest with the admin's own
- *      keychain (F14);
- *   5. verifyChain over previous chain + new manifest BEFORE any write — a
- *      rejected chain never reaches the store (the store would refuse it too
- *      via checkStoreRecord; this gate fails first, with a named error);
- *   6. store.saveRoster on the admin's OWN store FIRST;
- *   7. only then return { manifest, record }.
+ *   4. a frozen record is refused BEFORE anything is built — the named error
+ *      for pillar's own refusal (groups-v2.mjs:534);
+ *   5. the vendored `adminChange` builds, signs with the admin's own keychain
+ *      (F14), verifies the next version, extends the chain, clears the target
+ *      from `leaving` on leave/remove (:541) and saves to the admin's OWN
+ *      store FIRST (:542);
+ *   6. only then return { manifest, record }.
+ *
+ * `mailbox: null` makes the vendored mailbox coupling a no-op
+ * (`syncMailboxRoster`, :457-458) — this wrapper owns no mailbox row.
  *
  * P-7 (a remove/leave manifest puts the member into pendingRemovals in the
  * same step) is slice 7's: it spans the roster and adapter.json. The record
- * fields other than chain/head (seen, leaving, frozen, …) are preserved
+ * fields other than chain/head/leaving (seen, frozen, …) are preserved
  * verbatim; the receiver-side application semantics belong to slice 8.
  *
  * Synchronous; the adapter's serial queue (I-5) is the caller's job.
@@ -124,14 +149,20 @@ export function signAndApplyNext(store, groupId, keychain, action, buildOpts = {
   if (!admin || admin.uuaid !== id.uuaid || admin.key !== id.publicKeyHex) {
     throw new ManifestError("NotAdminError", "the signer is not the head's single active admin");
   }
-  const next = buildNext(head, action, buildOpts); // vendored builder
-  const signed = signManifest(next, keychain); // F14: the admin's own keychain
-  const chain = [...rec.chain, signed];
-  const v = verifyChain(chain);
-  if (!v.ok) throw new ManifestError("ChainVerifyError", `signed chain rejected: ${v.reason}@${v.at}`);
-  const record = { ...rec, chain, head: { version: signed.version, hash: manifestHash(signed) } };
-  store.saveRoster(record); // OWN STORE FIRST (saveRoster refuses an unverified record, S-1)
-  return { manifest: signed, record }; // …and only then handed back for sending
+  // D1: pillar refuses an equivicated group here (:534); this is the named
+  // form of that refusal, and the vendored call below refuses it again.
+  if (rec.frozen) {
+    throw new ManifestError("FrozenGroupError",
+      `${String(groupId)} is frozen (equivocation); a frozen group can only be replaced by a new group`);
+  }
+  // A raw identity is accepted by signManifest but NOT by :543, which reads
+  // keychain._identity.uuaid unguarded — normalize to the keychain shape.
+  const signer = keychain?._identity ? keychain : { _identity: id };
+  const { rec: record, manifest } = adminChange({
+    store: rosterStoreFor(store), mailbox: null, keychain: signer,
+    groupId, action, opts: buildOpts,
+  });
+  return { manifest, record }; // …and only then handed back for sending
 }
 
 // ── B-3: policy-record candidates from the verified head ─────────────────

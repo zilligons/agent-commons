@@ -12,7 +12,8 @@ import { join } from "node:path";
 
 import { Keychain } from "../src/vendor/pillar/identity/keychain.mjs";
 import {
-  buildGenesis, buildNext, signManifest, newRecord, verifyChain, manifestHash,
+  adminChange, buildGenesis, buildNext, signManifest, newRecord, verifyChain,
+  manifestHash, RosterStore,
 } from "../src/vendor/pillar/groups-v2.mjs";
 import { RegistryTrust } from "../src/trust.mjs";
 import { SpaceStore } from "../src/spaces/store.mjs";
@@ -217,6 +218,124 @@ test("V-7 unit CONTROL: a key Ā beside a is refused at depth 0, depth 2 and ins
   }), { name: "NonAsciiKeyError" }, "inside the lexicon");
   // Values may be non-ASCII; only KEYS are refused.
   assertAsciiKeys({ a: "Ā", b: { c: "—ok→" } });
+});
+
+// T1 (R1): pin the whole 0x80-0xff band, not only U+0100. A `> 0xff` mutant
+// slips é (U+00E9) and U+0080 through; these two arms make it RED.
+test("V-7 unit T1: Latin-1 keys é (U+00E9) and U+0080 are refused, so the 0x80-0xff band is pinned", () => {
+  assert.throws(() => assertAsciiKeys({ a: 1, "é": 2 }), { name: "NonAsciiKeyError" }, "U+00E9");
+  assert.throws(() => assertAsciiKeys({ a: 1, "\u0080": 2 }), { name: "NonAsciiKeyError" }, "U+0080");
+  assert.throws(() => assertAsciiKeys({ "é": { "\u0080": 1 } }), { name: "NonAsciiKeyError" }, "nested Latin-1");
+});
+
+// ── D1 (R1): a frozen record is refused before anything is built ──────────
+
+test("D1 CONTROL: signAndApplyNext on a frozen record throws FrozenGroupError and writes nothing", () => {
+  const fx = fixtureRoster();
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    // Equivocation proof: two distinct signed heads off the same genesis.
+    const alt = signManifest(buildNext(fx.chain[0], "rename", { name: "other" }), fx.admin);
+    const alt2 = signManifest(buildNext(fx.chain[0], "rename", { name: "third" }), fx.admin);
+    const frozen = structuredClone(fx.rec);
+    frozen.frozen = { manifests: [alt, alt2] };
+    store.saveRoster(frozen);
+    const before = JSON.stringify(store.loadRoster(fx.groupId));
+
+    assert.throws(() => signAndApplyNext(store, fx.groupId, fx.admin, "rename", { name: "after-freeze" }),
+      { name: "FrozenGroupError" }, "pillar refuses a frozen group (groups-v2.mjs:534)");
+    // Unchanged: same head version AND same bytes on reload.
+    const after = store.loadRoster(fx.groupId);
+    assert.equal(after.head.version, frozen.head.version, "no new version on a frozen record");
+    assert.equal(JSON.stringify(after), before, "the stored record is byte-identical");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// ── D2 (R1): leave/remove clears the target from `leaving` ────────────────
+
+/** admin (active) + m1 (active, accepted) + m2 (invited); m1 in `leaving`. */
+function fixtureLeaving() {
+  const admin = identity();
+  const m1 = identity();
+  const m2 = identity();
+  const genesis = signManifest(buildGenesis({
+    name: "leave-space", creator: admin,
+    members: [{ uuaid: m1.uuaid, key: m1.publicKeyHex }, { uuaid: m2.uuaid, key: m2.publicKeyHex }],
+    ext: {},
+  }), admin);
+  const accept = signManifest(buildNext(genesis, "accept", { target: m1.uuaid, request: "env-accept-m1" }), admin);
+  const chain = [genesis, accept];
+  assert.equal(verifyChain(chain).ok, true, "leaving fixture chain verifies");
+  const rec = newRecord(chain);
+  rec.leaving = [m1.uuaid];
+  return { admin, m1, m2, rec, groupId: genesis.id, chain };
+}
+
+test("D2 CONTROL: a remove (and a leave) of a uuaid in rec.leaving drops it from the returned AND reloaded record", () => {
+  for (const action of ["remove", "leave"]) {
+    const fx = fixtureLeaving();
+    const home = mkHome();
+    try {
+      const store = new SpaceStore(home);
+      store.saveRoster(fx.rec);
+      assert.deepEqual(store.loadRoster(fx.groupId).leaving, [fx.m1.uuaid], `${action}: m1 starts in leaving`);
+
+      // `leave` requires a non-empty request string (verifyNext:276); `remove` does not.
+      const opts = action === "leave"
+        ? { target: fx.m1.uuaid, request: "env-leave-m1" }
+        : { target: fx.m1.uuaid };
+      const { record } = signAndApplyNext(store, fx.groupId, fx.admin, action, opts);
+      assert.ok(!record.leaving.includes(fx.m1.uuaid), `${action}: returned record drops m1 from leaving`);
+      const reloaded = store.loadRoster(fx.groupId);
+      assert.ok(!reloaded.leaving.includes(fx.m1.uuaid), `${action}: reloaded record drops m1 from leaving`);
+      assert.equal(reloaded.chain[reloaded.chain.length - 1].transition.action, action);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }
+});
+
+// ── R1 differential: my signer == vendored adminChange, byte-for-byte ─────
+
+test("R1 differential: signAndApplyNext deep-equals vendored adminChange on chain, head and leaving (invite, remove, rename)", () => {
+  const ISSUED = "2026-10-11T00:00:00.000Z"; // pin: buildNext stamps issuedAt from the clock
+  // fixtureRoster's m1 is already removed at v2, so the `remove` case targets
+  // m2 (invited → removed, classifyChange:242). m2 is put in `leaving` first.
+  const cases = [
+    { action: "invite", leaving: null, opts: (fx) => ({ member: { uuaid: fx.m3.uuaid, key: fx.m3.publicKeyHex }, issuedAt: ISSUED }) },
+    { action: "remove", leaving: (fx) => fx.m2.uuaid, opts: (fx) => ({ target: fx.m2.uuaid, issuedAt: ISSUED }) },
+    { action: "rename", leaving: null, opts: () => ({ name: "renamed", issuedAt: ISSUED }) },
+  ];
+  for (const c of cases) {
+    const fx = fixtureRoster();
+    fx.m3 = identity();
+    const homeA = mkHome(); // mine, through SpaceStore
+    const homeB = mkHome(); // vendored, through a raw RosterStore
+    try {
+      const baseA = structuredClone(fx.rec);
+      const baseB = structuredClone(fx.rec);
+      if (c.leaving) { const u = c.leaving(fx); baseA.leaving = [u]; baseB.leaving = [u]; }
+
+      const storeA = new SpaceStore(homeA);
+      storeA.saveRoster(baseA);
+      const mine = signAndApplyNext(storeA, fx.groupId, fx.admin, c.action, c.opts(fx));
+
+      const storeB = new RosterStore(homeB);
+      storeB.save(baseB);
+      const vend = adminChange({
+        store: storeB, mailbox: null, keychain: { _identity: fx.admin },
+        groupId: fx.groupId, action: c.action, opts: c.opts(fx),
+      });
+
+      assert.deepEqual(mine.record.chain, vend.rec.chain, `${c.action}: chain deep-equal`);
+      assert.deepEqual(mine.record.head, vend.rec.head, `${c.action}: head deep-equal`);
+      assert.deepEqual(mine.record.leaving, vend.rec.leaving, `${c.action}: leaving deep-equal`);
+      // Deterministic Ed25519 + pinned issuedAt ⇒ the head manifest is byte-equal.
+      assert.equal(JSON.stringify(mine.manifest), JSON.stringify(vend.manifest), `${c.action}: manifest byte-equal`);
+    } finally {
+      rmSync(homeA, { recursive: true, force: true });
+      rmSync(homeB, { recursive: true, force: true });
+    }
+  }
 });
 
 // ── C9: the wrapper adds no second import site ────────────────────────────

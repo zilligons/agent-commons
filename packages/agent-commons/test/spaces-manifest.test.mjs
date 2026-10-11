@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -205,6 +205,64 @@ test("V-6 refusals: absent roster, a non-admin signer and a missing self check w
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+// ── V-6 (R2): a failed own-store save is never masked ─────────────────────
+
+test("V-6 CONTROL (R2): a throwing own-store save propagates; the real store keeps v(n) and no manifest comes back", () => {
+  const fx = fixtureRoster();
+  const home = mkHome();
+  try {
+    const real = new SpaceStore(home);
+    real.saveRoster(fx.rec);
+    // Store stub: the REAL loadRoster (so every verify gate sees the true v2
+    // record) and a failing saveRoster. The injected failure must propagate
+    // through the vendored adminChange's store.save (groups-v2.mjs:542) and
+    // out of the wrapper — a save that swallows its error and still returns
+    // the signed manifest is the exact hazard V-6's order exists to prevent:
+    // never hand back a manifest the own store does not hold.
+    const stub = {
+      loadRoster: (id) => real.loadRoster(id),
+      saveRoster: () => { throw new Error("injected save failure"); },
+    };
+    const m3 = identity();
+    let returned = null;
+    assert.throws(
+      () => {
+        returned = signAndApplyNext(stub, fx.groupId, fx.admin, "invite", {
+          member: { uuaid: m3.uuaid, key: m3.publicKeyHex },
+        });
+      },
+      /injected save failure/,
+      "the failed save throws out of signAndApplyNext, unswallowed",
+    );
+    assert.equal(returned, null, "no manifest is returned when the own-store save failed");
+    assert.equal(real.loadRoster(fx.groupId).head.version, 2, "the REAL store still holds v(n) = v2");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// ── S-1 (R2): the admin save path keeps the 0700 tightening ───────────────
+
+test("S-1 CONTROL (R2): an admin change retightens a loosened spaces/ to 0700, pinning the save to SpaceStore.saveRoster", () => {
+  const fx = fixtureRoster();
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    store.saveRoster(fx.rec);
+    chmodSync(store.spacesHome, 0o755); // loosen behind the store's back
+    assert.equal(statSync(store.spacesHome).mode & 0o777, 0o755, "loosened first");
+
+    const m3 = identity();
+    signAndApplyNext(store, fx.groupId, fx.admin, "invite", {
+      member: { uuaid: m3.uuaid, key: m3.publicKeyHex },
+    });
+    // A save routed AROUND the adapter (straight to the vendored RosterStore)
+    // leaves 0755: RosterStore.save only tightens spaces/groups-v2/, never
+    // spacesHome itself. Only SpaceStore.saveRoster's _ensureSpaces retightens
+    // spaces/ to 0700 (store.mjs:243).
+    assert.equal(statSync(store.spacesHome).mode & 0o777, 0o700,
+      "spaces/ is 0700 again after the admin change");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 // ── V-7 unit: the ASCII-key guard ─────────────────────────────────────────
 
 test("V-7 unit CONTROL: a key Ā beside a is refused at depth 0, depth 2 and inside a lexicon", () => {
@@ -226,6 +284,24 @@ test("V-7 unit T1: Latin-1 keys é (U+00E9) and U+0080 are refused, so the 0x80-
   assert.throws(() => assertAsciiKeys({ a: 1, "é": 2 }), { name: "NonAsciiKeyError" }, "U+00E9");
   assert.throws(() => assertAsciiKeys({ a: 1, "\u0080": 2 }), { name: "NonAsciiKeyError" }, "U+0080");
   assert.throws(() => assertAsciiKeys({ "é": { "\u0080": 1 } }), { name: "NonAsciiKeyError" }, "nested Latin-1");
+});
+
+// ── lone-guard poles (R2): each cross-check arm pinned with nothing else failing ──
+
+test("Guard CONTROL (R2): an array-nested non-ASCII key is refused, and a right-version/wrong-hash head is HeadMismatchError", () => {
+  // The recursion must descend INTO array elements: a guard that skips arrays
+  // never sees this key. (Values may be non-ASCII; KEYS may not, at any depth.)
+  assert.throws(() => assertAsciiKeys({ a: [{ "é": 1 }] }), { name: "NonAsciiKeyError" },
+    "array-nested non-ASCII key");
+
+  // The head cross-check's two arms, separated: the version here is RIGHT and
+  // only the hash lies, so a version-only compare would let this through.
+  const fx = fixtureRoster();
+  const badHash = structuredClone(fx.rec);
+  badHash.head = { version: fx.rec.head.version, hash: "b".repeat(64) };
+  assert.equal(verifyChain(badHash.chain).ok, true, "the chain itself still verifies");
+  assert.throws(() => verifiedHead(badHash), { name: "HeadMismatchError" },
+    "right version, wrong hash");
 });
 
 // ── D1 (R1): a frozen record is refused before anything is built ──────────

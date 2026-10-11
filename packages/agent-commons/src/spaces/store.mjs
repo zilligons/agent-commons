@@ -28,10 +28,11 @@ const SOFT_REASONS = ["reconsent"]; // P-12 (HS-1)
 // Exact key sets, one per level. A strict set at every level is what refuses a
 // `policy`/`agents` key anywhere (S-4: policy is derived, never stored) and a
 // `body` inside a heldRefs entry (L-6: metadata only) — neither is in a set.
-const ADAPTER_KEYS = ["v", "groupId", "channels", "profile", "consent", "hardStop", "softStop", "pendingRemovals", "heldRefs"];
+const ADAPTER_KEYS = ["v", "groupId", "channels", "profile", "consent", "outsiderScan", "hardStop", "softStop", "pendingRemovals", "heldRefs"];
 const CHANNELS_KEYS = ["content", "control"];
 const PROFILE_KEYS = ["id", "hash"];
 const CONSENT_KEYS = ["manifestVersion", "charterHash", "carriers"];
+const OUTSIDER_SCAN_KEYS = ["version", "hash"];
 const STOP_KEYS = ["reason", "at"];
 const PENDING_KEYS = ["uuaid", "key", "manifestVersion", "queuedAt", "outboxId"];
 const HELDREF_KEYS = ["ref", "groupId", "from", "msgId", "receivedAt"];
@@ -86,6 +87,7 @@ export function validateAdapterState(state, id) {
   if (!hex64(state.consent.charterHash)) throw badAdapter("consent.charterHash: not a 64-hex sha256");
   if (!Array.isArray(state.consent.carriers)) throw badAdapter("consent.carriers: not an array");
   if (!state.consent.carriers.every(nonEmptyString)) throw badAdapter("consent.carriers: every entry must be a non-empty string");
+  if (!exactKeys(state.outsiderScan, OUTSIDER_SCAN_KEYS) || !posInt(state.outsiderScan.version) || !hex64(state.outsiderScan.hash)) throw badAdapter("outsiderScan: expected {version: positive safe integer, hash: 64-hex}");
   validateStop(state.hardStop, HARD_REASONS, "hardStop");
   validateStop(state.softStop, SOFT_REASONS, "softStop");
   if (!Array.isArray(state.pendingRemovals)) throw badAdapter("pendingRemovals: not an array");

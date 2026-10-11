@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { Keychain } from "../src/vendor/pillar/identity/keychain.mjs";
 import {
-  buildGenesis, buildNext, signManifest, newRecord, verifyChain,
+  buildGenesis, buildNext, signManifest, newRecord, verifyChain, manifestHash,
 } from "../src/vendor/pillar/groups-v2.mjs";
 import {
   SpaceStore, SpaceStoreError, ADAPTER_V, DISPATCHER_V, PENDING_TTL_MS,
@@ -47,6 +47,7 @@ function fixtureRoster() {
   const chain = [genesis, removal];
   assert.equal(verifyChain(chain).ok, true, "fixture chain verifies");
   const rec = newRecord(chain);
+  m1.outsiderScan = { version: removal.version, hash: manifestHash(removal) }; // fixture's consented manifest
   return { admin, m1, m2, rec, groupId: genesis.id };
 }
 
@@ -57,6 +58,7 @@ function fixtureAdapter(groupId, m1, now, overrides = {}) {
     channels: { content: `channel://agentnet/group/${groupId}`, control: `channel://agentnet/group-ctl/${groupId}` },
     profile: { id: "prof-pole", hash: "a".repeat(64) },
     consent: { manifestVersion: 2, charterHash: "b".repeat(64), carriers: ["carrier://pole/one"] },
+    outsiderScan: { ...m1.outsiderScan },
     hardStop: { reason: "outsider", at: now },
     softStop: { reason: "reconsent", at: now },
     pendingRemovals: [{ uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-pole-1" }],
@@ -66,6 +68,14 @@ function fixtureAdapter(groupId, m1, now, overrides = {}) {
 }
 
 const mode = (p) => statSync(p).mode & 0o777;
+
+test("R2 schema outsiderScan has an exact positive-version and 64-hex shape",()=>{
+  const {groupId,m1}=fixtureRoster(),state=fixtureAdapter(groupId,m1,1_800_000_000_000);
+  assert.doesNotThrow(()=>validateAdapterState(state,groupId));
+  for(const cursor of [null,[],{}, {version:0,hash:"a".repeat(64)}, {version:-1,hash:"a".repeat(64)}, {version:1.5,hash:"a".repeat(64)}, {version:Number.MAX_SAFE_INTEGER+1,hash:"a".repeat(64)}, {version:"2",hash:"a".repeat(64)}, {version:2,hash:"x".repeat(64)}, {version:2,hash:"a".repeat(63)}, {...state.outsiderScan,policy:{}}]){
+    assert.throws(()=>validateAdapterState({...state,outsiderScan:cursor},groupId),{name:"AdapterStateError"});
+  }
+});
 
 // ── P1: S-3 load-time pruning ─────────────────────────────────────────────
 
@@ -537,6 +547,7 @@ test("P5 CONTROL: a policy key at every level is refused (S-4); saveAdapter unde
     ["channels", { ...good, channels: { ...good.channels, policy: {} } }],
     ["profile", { ...good, profile: { ...good.profile, policy: {} } }],
     ["consent", { ...good, consent: { ...good.consent, policy: {} } }],
+    ["outsiderScan", { ...good, outsiderScan: { ...good.outsiderScan, policy: {} } }],
     ["hardStop", { ...good, hardStop: { ...good.hardStop, policy: {} } }],
     ["softStop", { ...good, softStop: { ...good.softStop, policy: {} } }],
     ["pendingRemovals entry", { ...good, pendingRemovals: [{ ...good.pendingRemovals[0], policy: {} }] }],

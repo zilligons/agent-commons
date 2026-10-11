@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { AgentCommons, Keychain, createProfile, digest, signDocument, proposeAlias, seal } from "../src/index.mjs";
 import { buildGenesis, buildNext, signManifest, newRecord } from "../src/vendor/pillar/groups-v2.mjs";
 import { SpaceStore, ADAPTER_V, PENDING_TTL_MS } from "../src/spaces/store.mjs";
 import { signAndApplyNext, verifiedHead } from "../src/spaces/manifest.mjs";
-import { SpacePolicy, assertPolicyIdentity } from "../src/spaces/policy.mjs";
+import { SpacePolicy, assertPolicyIdentity, writePolicy } from "../src/spaces/policy.mjs";
+import { manifestHash } from "../src/spaces/pillar-group.mjs";
 
 function fixture(t){
   const home=mkdtempSync("/tmp/spaces-policy-"),store=new SpaceStore(home),keys=Array.from({length:4},()=>{const k=new Keychain("unused");k._identity=Keychain.generate();return k});
@@ -17,7 +18,8 @@ function fixture(t){
   const genesis=signManifest(buildGenesis({name:"Policy fixture",creator:owner._identity,members:[member,invited].map(k=>({uuaid:uid(k),key:key(k)})),ext:{commons}}),owner._identity);
   store.saveRoster(newRecord([genesis]));
   signAndApplyNext(store,genesis.id,owner,"accept",{target:uid(member),request:"accept-fixture"});
-  const state={v:ADAPTER_V,groupId:genesis.id,channels:{content:`channel://agentnet/group/${genesis.id}`,control:`channel://agentnet/group-ctl/${genesis.id}`},profile:commons.profile,consent:{manifestVersion:2,charterHash:"c".repeat(64),carriers:[]},hardStop:null,softStop:null,pendingRemovals:[],heldRefs:[]};
+  const head=verifiedHead(store.loadRoster(genesis.id));
+  const state={v:ADAPTER_V,groupId:genesis.id,channels:{content:`channel://agentnet/group/${genesis.id}`,control:`channel://agentnet/group-ctl/${genesis.id}`},profile:commons.profile,consent:{manifestVersion:2,charterHash:"c".repeat(64),carriers:[]},outsiderScan:{version:head.version,hash:manifestHash(head)},hardStop:null,softStop:null,pendingRemovals:[],heldRefs:[]};
   store.saveAdapter(genesis.id,state);
   const policy={mode:"local",offline:true,agents:Object.fromEntries(keys.slice(0,3).map(k=>[uid(k),{kind:"agent",publicKey:key(k),capabilities:["commons:message"]}]))};
   const engine=new AgentCommons({keychain:owner,policy});engine.addProfile(profile);
@@ -103,8 +105,8 @@ for(const change of ["profile","tenant"])test(`HS-1..4 hard stop survives ${chan
   receivedChange(f,"remove",{target:f.uid(f.outsider)});f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(Object.keys(f.policy.agents).length,3);
 });
 test("HS-3 hard resume retains an outstanding soft stop",t=>{
-  const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();
-  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));
+  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});receivedChange(f,"remove",{target:f.uid(f.outsider)});
   f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(adapter(f).softStop.reason,"reconsent");assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.length,3);
 });
 test("HS-2 reconsent of a safe head cannot clear the earlier hard latch",t=>{
@@ -167,6 +169,11 @@ test("P-8 freeze uses only known non-removed control and no pending recipients",
   assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.includes(f.uid(f.member)),false);assert.equal(f.policy.channels[f.control].members.length,2);
 });
 
+test("HS-3 policy-mismatch hard resume retains an outstanding soft stop",t=>{
+  const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();
+  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});
+  f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(adapter(f).softStop.reason,"reconsent");assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.length,3);
+});
 const sorted=a=>[...a].sort();
 const outsiderInvite=f=>({member:{uuaid:f.uid(f.outsider),key:f.key(f.outsider)}});
 test("G1 content = active minus leavers; control = active + invited (positive composition)",t=>{
@@ -214,8 +221,8 @@ test("G8 a consent naming a version outside the verified chain refuses the rebui
 });
 test("G9 the close signal carries code, group, reason and time",t=>{
   const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));
-  const e=f.signals.find(x=>x.code==="SPACE_CLOSED");assert.ok(e);assert.deepEqual(Object.keys(e).sort(),["at","code","groupId","reason"]);
-  assert.equal(e.groupId,f.groupId);assert.equal(e.reason,"outsider");assert.equal(e.at,adapter(f).hardStop.at);
+  const e=f.signals.find(x=>x.code==="SPACE_CLOSED");assert.ok(e);assert.deepEqual(Object.keys(e).sort(),["at","closed","code","groupId","persisted","reason"]);
+  assert.equal(e.groupId,f.groupId);assert.equal(e.reason,"outsider");assert.equal(e.at,adapter(f).hardStop.at);assert.equal(e.persisted,true);assert.equal(e.closed,true);
 });
 test("G10 a keychain absent from the verified head refuses construction",t=>{
   const f=fixture(t),engine=new AgentCommons({keychain:f.outsider,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());
@@ -259,8 +266,7 @@ test("R1 C-3 an intermediate outsider since consent latches even after its remov
   const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
   f.writer.rebuild();assertClosed(f);assert.equal(adapter(f).hardStop.reason,"outsider");assert.equal(f.signals.filter(s=>s.code==="SPACE_CLOSED").length,1);
   const hard=adapter(f).hardStop;new SpacePolicy(f.options);assert.deepEqual(adapter(f).hardStop,hard);assertClosed(f);
-  f.writer.hardResume();assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);
-  f.writer.reconsent(consent(f));assert.equal(adapter(f).hardStop.reason,"outsider");f.writer.hardResume();assert.equal(adapter(f).hardStop,null);
+  f.writer.hardResume();assert.equal(adapter(f).hardStop,null);f.writer.rebuild();assert.equal(adapter(f).hardStop,null);
 });
 for(const method of ["rebuild","check"])test(`R1 C-4 missing roster closes on ${method} failure without a latch`,t=>{
   const f=fixture(t);rmSync(f.store.rosterPath(f.groupId));assert.throws(()=>f.writer[method]());assertClosed(f);assert.equal(adapter(f).hardStop,null);assert.equal(f.signals.length,0);
@@ -278,7 +284,7 @@ test("R1 C-6 a second mismatch preserves the first hard-stop reason and time",t=
   const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const hard=adapter(f).hardStop;f.advance(5000);
   f.policy.agents[f.uid(f.member)]={kind:"agent",publicKey:f.key(f.member),capabilities:["commons:message"]};
   assert.equal(f.writer.check(),false);assert.deepEqual(adapter(f).hardStop,hard);assertClosed(f);
-  assert.deepEqual(f.signals.at(-1),{code:"SPACE_CLOSED",groupId:f.groupId,...hard});
+  assert.deepEqual(f.signals.at(-1),{code:"SPACE_CLOSED",groupId:f.groupId,...hard,persisted:true,closed:true});
 });
 test("R1 C-6 persistence precedes a failing close and the signal still runs",t=>{
   const f=fixture(t);Object.freeze(f.policy);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));
@@ -305,4 +311,157 @@ test("G15 latched rebuild closes directly without another signal",t=>{
   const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const before=f.signals.length,hard=adapter(f).hardStop;
   f.policy.agents[f.uid(f.member)]={kind:"agent",publicKey:f.key(f.member),capabilities:["commons:message"]};
   f.writer.rebuild();assertClosed(f);assert.equal(f.signals.length,before);assert.deepEqual(adapter(f).hardStop,hard);
+});
+// AC3-Sonnet 36be6d6e, L26 slice 7 R1 delta review, base 9009be4. Append to test/spaces-policy.test.mjs
+// (uses that file's fixture, receivedChange, assertClosed, consent, adapter, outsiderInvite, signAndApplyNext).
+// RED on 9009be4 (expected): R1d-D1, R1d-D2, R1d-D3. GREEN on 9009be4: the rest; M35b and M40 kill their poles mutants.
+test("R1d-D1 reconsent over an unobserved invite+remove span latches before moving the baseline",t=>{
+  const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  f.writer.reconsent(consent(f));assert.equal(adapter(f).hardStop?.reason,"outsider");assertClosed(f);
+});
+test("R1d-D2 hardResume refuses an unscanned span without changing the stop",t=>{
+ const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();
+ signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+ const first=adapter(f).hardStop,bytes=readFileSync(f.store.adapterPath(f.groupId)),n=f.signals.length;f.advance(7000);
+ assert.throws(()=>f.writer.hardResume(),{name:"OutsiderScanBehindError"});assert.deepEqual(adapter(f).hardStop,first);
+ assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);assert.equal(f.signals.length,n);assertClosed(f);
+ f.writer.rebuild();f.writer.hardResume();assert.equal(adapter(f).hardStop,null);
+});
+test("R1d-D3 a null agent record in the live policy latches policy-mismatch instead of throwing",t=>{
+  const f=fixture(t);f.policy.agents[f.uid(f.member)]=null;
+  assert.equal(f.writer.check(),false);assert.equal(adapter(f).hardStop?.reason,"policy-mismatch");assertClosed(f);
+});
+test("R1d-M35b a latched rebuild still closes a swapped-in trust policy (kills M35b)",async t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));
+  f.engine.trust.policy={...f.policy,agents:Object.fromEntries([f.owner,f.member,f.invited].map(k=>[f.uid(k),{kind:"agent",publicKey:f.key(k),capabilities:["commons:message"]}]))};
+  f.writer.rebuild();await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R1d-M40 hardResume keeps the soft-stop stamp and raises no second RECONSENT_REQUIRED (kills M40)",t=>{
+  const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();
+  receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});const soft=adapter(f).softStop;f.advance(9000);
+  f.writer.hardResume();assert.deepEqual(adapter(f).softStop,soft);assert.equal(f.signals.filter(s=>s.code==="SPACE_RECONSENT_REQUIRED").length,1);
+});
+test("R1d-HS3 outsider-origin hard resume retains a soft stop that postdates the reconsent",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));f.writer.reconsent(consent(f));
+  receivedChange(f,"remove",{target:f.uid(f.outsider)});receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"later"}}});
+  f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(adapter(f).softStop.reason,"reconsent");
+  assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.length,3);
+});
+test("R1d-CL2 outsider, tenant change, removal resumes without reconsent in the soft form",t=>{
+ const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));receivedChange(f,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});receivedChange(f,"remove",{target:f.uid(f.outsider)});
+ const before=adapter(f);f.writer.rebuild();f.writer.hardResume();const after=adapter(f);
+ assert.equal(after.hardStop,null);for(const k of ["consent","profile","softStop"])assert.deepEqual(after[k],before[k]);
+ assert.deepEqual(f.policy.channels[f.content].members,[]);assert.equal(f.policy.channels[f.control].members.length,3);
+ f.writer.reconsent(consent(f));assert.equal(adapter(f).softStop,null);assert.equal(Object.keys(f.policy.agents).length,3);
+});
+
+test("R2 cursor resume stays open through rebuild and a fresh-store restart",async t=>{
+  const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  f.writer.rebuild();const before=adapter(f);assert.equal(before.hardStop.reason,"outsider");
+  const head=verifiedHead(f.store.loadRoster(f.groupId));assert.deepEqual(before.outsiderScan,{version:head.version,hash:manifestHash(head)});
+  f.advance(5000);f.writer.hardResume();f.writer.rebuild();assert.equal(adapter(f).hardStop,null);
+  for(const k of ["consent","profile","softStop","outsiderScan"])assert.deepEqual(adapter(f)[k],before[k]);
+  const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());
+  new SpacePolicy({...f.options,engine,store:new SpaceStore(f.home)});
+  assert.equal(adapter(f).hardStop,null);assert.equal(engine.policy.channels[f.content].members.length,2);
+  await engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message");assert.equal(f.signals.filter(s=>s.code==="SPACE_CLOSED").length,1);
+});
+test("R2 latched scan records a second outsider once before allowing resume",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));const before=adapter(f),first=before.hardStop;
+  const other=Keychain.generate();signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  signAndApplyNext(f.store,f.groupId,f.owner,"invite",{member:{uuaid:other.uuaid,key:other.publicKeyHex}});signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:other.uuaid});
+  const bytes=readFileSync(f.store.adapterPath(f.groupId));assert.throws(()=>f.writer.hardResume(),{name:"OutsiderScanBehindError"});assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);
+  f.writer.rebuild();assert.deepEqual(adapter(f).hardStop,first);assertClosed(f);
+  const events=f.signals.filter(s=>s.code==="SPACE_OUTSIDER_SEEN");assert.equal(events.length,1);assert.equal(events[0].from.version,3);assert.equal(events[0].to.version,6);
+  f.writer.rebuild();assert.equal(f.signals.filter(s=>s.code==="SPACE_OUTSIDER_SEEN").length,1);
+  f.writer.hardResume();assert.equal(adapter(f).hardStop,null);assert.equal(f.signals.filter(s=>s.code==="SPACE_CLOSED").length,1);
+  for(const k of ["consent","profile","softStop"])assert.deepEqual(adapter(f)[k],before[k]);
+});
+test("R2 a fresh outsider after resume closes again",t=>{
+  const f=fixture(t);receivedChange(f,"invite",outsiderInvite(f));receivedChange(f,"remove",{target:f.uid(f.outsider)});f.writer.hardResume();
+  const before=adapter(f);receivedChange(f,"invite",outsiderInvite(f));assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);
+  assert.equal(f.signals.filter(s=>s.code==="SPACE_CLOSED").length,2);assert.equal(adapter(f).outsiderScan.version,5);
+  for(const k of ["consent","profile","softStop"])assert.deepEqual(adapter(f)[k],before[k]);
+});
+test("R2 matching cursor version with a verified fork hash rescans from consent",t=>{
+  const f=fixture(t),prefix=f.store.loadRoster(f.groupId).chain;
+  receivedChange(f,"rename",{name:"safe branch"});const cursor=adapter(f).outsiderScan;assert.equal(cursor.version,3);
+  const invite=signManifest(buildNext(prefix.at(-1),"invite",outsiderInvite(f)),f.owner._identity);
+  const remove=signManifest(buildNext(invite,"remove",{target:f.uid(f.outsider)}),f.owner._identity);
+  f.store.saveRoster(newRecord([...prefix,invite,remove]));assert.notEqual(manifestHash(invite),cursor.hash);
+  f.writer.rebuild();assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);assert.equal(adapter(f).outsiderScan.version,4);
+});
+test("R2 missing cursor version rescans from consent",t=>{
+  const f=fixture(t),state=adapter(f);state.outsiderScan={version:99,hash:"a".repeat(64)};f.store.saveAdapter(f.groupId,state);
+  signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  f.writer.rebuild();assert.equal(adapter(f).hardStop.reason,"outsider");assertClosed(f);
+});
+test("R2 cursor and a soft-stop update share one save; unchanged rebuild writes nothing",t=>{
+  const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"rename",{name:"safe rename"});signAndApplyNext(f.store,f.groupId,f.owner,"ext_update",{ext:{commons:{...f.commons,tenant:"changed"}}});
+  const save=f.store.saveAdapter.bind(f.store);const writes=[];f.store.saveAdapter=(id,state)=>{writes.push(structuredClone(state));save(id,state)};
+  f.writer.rebuild();assert.equal(writes.length,1);assert.equal(writes[0].outsiderScan.version,4);assert.equal(writes[0].softStop.reason,"reconsent");
+  f.writer.rebuild();assert.equal(writes.length,1);
+});
+test("R2 cursor and outsider latch survive a crash in one atomic save",t=>{
+  const f=fixture(t);signAndApplyNext(f.store,f.groupId,f.owner,"invite",outsiderInvite(f));signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  const save=f.store.saveAdapter.bind(f.store);let writes=0;f.store.saveAdapter=(id,state)=>{save(id,state);if(++writes===1)throw new Error("crash after first save")};
+  assert.throws(()=>f.writer.rebuild(),/crash after first save/);assert.equal(writes,1);
+  const fresh=new SpaceStore(f.home),persisted=fresh.loadAdapter(f.groupId).state;assert.equal(persisted.outsiderScan.version,4);assert.equal(persisted.hardStop.reason,"outsider");
+  const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());new SpacePolicy({...f.options,store:fresh,engine});assert.deepEqual(engine.policy.agents,{});
+});
+test("R2 stop signal reports failed persistence and closes the real gate",async t=>{
+  const f=fixture(t),failure=new Error("save failed");f.store.saveAdapter=()=>{throw failure};delete f.policy.agents[f.uid(f.member)];
+  assert.throws(()=>f.writer.check(),e=>e===failure);assert.equal(adapter(f).hardStop,null);assertClosed(f);
+  assert.equal(f.signals.at(-1).persisted,false);assert.equal(f.signals.at(-1).closed,true);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R2 frozen engine copy is replaced independently; other consumers close",async t=>{
+  const f=fixture(t),copy=Object.freeze({...f.policy});f.engine.policy=copy;
+  assert.throws(()=>f.writer.check(),TypeError);assert.notEqual(f.engine.policy,copy);assertClosed(f);assert.deepEqual(f.engine.policy.agents,{});
+  assert.equal(f.signals.at(-1).persisted,true);assert.equal(f.signals.at(-1).closed,true);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+for(const kind of ["class","frozen","non-extensible"])test(`R2 ${kind} trust consumer is replaced and the real gate refuses`,async t=>{
+  const f=fixture(t),copy=Object.assign(kind==="class"?new(class {})():{},f.policy);
+  if(kind==="frozen")Object.freeze(copy);if(kind==="non-extensible")Object.preventExtensions(copy);f.engine.trust.policy=copy;
+  assert.throws(()=>f.writer.check(),TypeError);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+  assert.notEqual(f.engine.trust.policy,copy);assert.deepEqual(f.engine.trust.policy.agents,{});assert.equal(f.signals.at(-1).closed,true);
+});
+test("R2 save and close failure retain the first error and still close the real gate",async t=>{
+  const f=fixture(t),failure=new Error("first save failure"),copy=Object.freeze({...f.policy});f.engine.trust.policy=copy;f.store.saveAdapter=()=>{throw failure};
+  assert.throws(()=>f.writer.check(),e=>e===failure);assert.equal(f.signals.at(-1).persisted,false);assert.equal(f.signals.at(-1).closed,true);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R2 a blocked fallback reports closed false and refuses the operation",async t=>{
+  const f=fixture(t),copy=Object.freeze({...f.policy});Object.defineProperty(f.engine,"policy",{value:copy,writable:false});
+  assert.throws(()=>f.writer.check(),TypeError);assert.equal(f.signals.at(-1).closed,false);assert.equal(f.signals.at(-1).persisted,true);assertClosed(f);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R2 direct writePolicy closes after a checkPolicy roster read throws",async t=>{
+  const f=fixture(t),rec=f.store.loadRoster(f.groupId),state=adapter(f),failure=new Error("roster read failed");f.store.loadRoster=()=>{throw failure};
+  assert.throws(()=>writePolicy(f.policy,rec,f.owner,state,verifiedHead(rec).ext.commons,f.allowlist,f.writer._options(f.options.clock())),e=>e===failure);assertClosed(f);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+});
+test("R2 emergency replacement refuses reopening without writes; fresh-engine restart recovers",async t=>{
+  const f=fixture(t);f.engine.trust.policy=Object.freeze({...f.policy});assert.throws(()=>f.writer.check(),TypeError);
+  const bytes=readFileSync(f.store.adapterPath(f.groupId));assert.throws(()=>f.writer.hardResume(),{name:"PolicyIdentityError"});assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);
+  assert.throws(()=>f.writer.reconsent(consent(f)),{name:"PolicyIdentityError"});assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);
+  const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());
+  const writer=new SpacePolicy({...f.options,engine,store:new SpaceStore(f.home)});writer.hardResume();assert.equal(adapter(f).hardStop,null);await engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message");
+});
+test("R2 legacy adapter without outsiderScan refuses and leaves the instance closed",t=>{
+  const f=fixture(t),state=adapter(f);delete state.outsiderScan;
+  // Deliberate legacy bytes bypass saveAdapter's strict current-schema validator.
+  writeFileSync(f.store.adapterPath(f.groupId),JSON.stringify(state));
+  assert.throws(()=>new SpacePolicy(f.options),{name:"AdapterStateError"});assertClosed(f);
+});
+test("R2 direct emergency closure blocks every reopening path before file writes",async t=>{
+  const f=fixture(t),rec=f.store.loadRoster(f.groupId),state=adapter(f),ext=verifiedHead(rec).ext.commons,options=f.writer._options(f.options.clock());
+  Object.freeze(f.policy);assert.throws(()=>writePolicy(f.policy,rec,f.owner,state,ext,f.allowlist,options),TypeError);
+  const bytes=readFileSync(f.store.adapterPath(f.groupId)),roster=readFileSync(f.store.rosterPath(f.groupId));
+  for(const action of [()=>f.writer.rebuild(),()=>f.writer.hardResume(),()=>f.writer.reconsent(consent(f)),()=>writePolicy(f.policy,rec,f.owner,state,ext,f.allowlist,options),()=>f.writer.applyOwnChange("rename",{name:"must not persist"})]){
+    assert.throws(action,{name:"PolicyIdentityError"});assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);assert.deepEqual(readFileSync(f.store.rosterPath(f.groupId)),roster);
+  }
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
 });

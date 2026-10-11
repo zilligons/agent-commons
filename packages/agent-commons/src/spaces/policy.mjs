@@ -1,10 +1,12 @@
 /** Synchronous space policy and operator stops. Queue ownership and sends belong to the adapter. */
 import { isDeepStrictEqual } from "node:util";
-import { keyBindsUuaid } from "./pillar-group.mjs";
+import { keyBindsUuaid, manifestHash } from "./pillar-group.mjs";
 import { agentRecordForRow, agentRecordsFromVerifiedHead, verifiedHead, selfCheck, signAndApplyNext } from "./manifest.mjs";
 import { prunePendingRemovals, validateAdapterState } from "./store.mjs";
 
 const POLICY_FIELDS=["mode","channelsEnabled","holdBeforeAdmission","agents","tenantProfiles","channels"];
+const emergencyEngines=new WeakSet(); // replacement invalidates the cached shared identity until a fresh engine is constructed
+function plainPolicy(value){return value!==null&&typeof value==="object"&&[Object.prototype,null].includes(Object.getPrototypeOf(value))}
 function latched(state){return state.hardStop!==null}
 export class PolicyError extends Error {
   constructor(name,message){super(message);this.name=name}
@@ -30,13 +32,29 @@ function outsider(rec,state,allowlist){
 }
 function closePolicies(policy,groupId,engine){
   let failure;
+  const references=[engine,engine?.trust].filter(Boolean);
   for(const candidate of new Set([policy,engine?.policy,engine?.trust?.policy])){
-    if(candidate===null||typeof candidate!=="object")continue;
-    const prototype=Object.getPrototypeOf(candidate);
-    if(prototype!==Object.prototype&&prototype!==null)continue;
-    try{Object.assign(candidate,closed(groupId))}catch(error){failure??=error}
+    try{
+      if(!plainPolicy(candidate)||!Object.isExtensible(candidate))throw new TypeError("Authority policy cannot be closed in place");
+      Object.assign(candidate,closed(groupId));
+    }catch(error){
+      failure??=error;
+      for(const owner of references){
+        if(owner.policy!==candidate)continue;
+        try{
+          const replacement=closed(groupId);owner.policy=replacement;
+          if(owner.policy!==replacement)throw new TypeError("Authority policy replacement did not take effect");
+          emergencyEngines.add(engine);
+        }catch(fallbackError){failure??=fallbackError}
+      }
+    }
   }
-  if(failure)throw failure;
+  let allClosed=false;
+  try{allClosed=(engine?[engine.policy,engine.trust?.policy]:[policy]).every(value=>plainPolicy(value)&&POLICY_FIELDS.every(field=>isDeepStrictEqual(value[field],closed(groupId)[field])))}catch(error){failure??=error}
+  return {closed:allClosed,error:failure??(allClosed?null:new PolicyError("PolicyCloseError","An authority consumer remains open"))};
+}
+function requireSharedPolicy(policy,engine){
+  if(assertPolicyIdentity(engine)!==policy)throw new PolicyError("PolicyIdentityError","Restart with a fresh engine to recover the shared policy identity");
 }
 function expectedPolicy(rec,self,state,ext,now){
   if(latched(state))return closed(state.groupId);
@@ -57,11 +75,11 @@ function expectedPolicy(rec,self,state,ext,now){
 }
 function stop(policy,state,reason,{engine,store,onSignal=()=>{},now=Date.now()}={}){
   if(state.hardStop===null)state.hardStop={reason,at:now};
-  try{store.saveAdapter(state.groupId,state)}finally{
-    try{closePolicies(policy,state.groupId,engine)}finally{
-      onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});
-    }
-  }
+  let persisted=false,failure;
+  try{store.saveAdapter(state.groupId,state);persisted=true}catch(error){failure=error}
+  const outcome=closePolicies(policy,state.groupId,engine);failure??=outcome.error;
+  try{onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop,persisted,closed:outcome.closed})}catch(error){failure??=error}
+  if(failure)throw failure;
   return false;
 }
 /** P-9 reads the verified files again; a policy file is never an input. */
@@ -72,18 +90,24 @@ export function checkPolicy(policy,rec,self,state,ext,allowlist,options){
   const saved=store.loadRoster(state.groupId),savedState=loaded?.state;
   if(!savedState)throw new PolicyError("AdapterAbsentError","No persisted adapter state for policy check");
   const expected=latched(savedState)?closed(state.groupId):expectedPolicy(saved,self,savedState,verifiedHead(saved).ext.commons,now);
-  const bound=Object.entries(policy.agents??{}).every(([uuaid,agent])=>keyBindsUuaid(uuaid,agent.publicKey)&&agent.kind==="agent"&&isDeepStrictEqual(agent.capabilities,["commons:message"]));
+  const bound=Object.entries(policy.agents??{}).every(([uuaid,agent])=>keyBindsUuaid(uuaid,agent?.publicKey)&&agent?.kind==="agent"&&isDeepStrictEqual(agent?.capabilities,["commons:message"]));
   if(policy===engine.policy&&policy===engine.trust.policy&&bound&&POLICY_FIELDS.every(field=>isDeepStrictEqual(policy[field],expected[field])))return true;
   return stop(policy,state,"policy-mismatch",options);
 }
 /** One run-to-completion write. The options supply the actual engine, store and operator signal. */
 export function writePolicy(policy,rec,self,state,ext,allowlist,options){
+  try{
   if(latched(state)){Object.assign(policy,closed(state.groupId));checkPolicy(policy,rec,self,state,ext,allowlist,options);return policy}
+  if(emergencyEngines.has(options.engine))requireSharedPolicy(policy,options.engine);
   if(outsider(rec,state,allowlist)){stop(policy,state,"outsider",options);checkPolicy(policy,rec,self,state,ext,allowlist,options);return policy}
   const expected=expectedPolicy(rec,self,state,ext,options.now??Date.now());
   Object.assign(policy,expected);
   checkPolicy(policy,rec,self,state,ext,allowlist,options);
   return policy;
+  }catch(error){
+    closePolicies(policy,state.groupId,options.engine);
+    throw error;
+  }
 }
 
 /** Owns only policy/state operations; the future adapter invokes these on its serial queue. */
@@ -108,18 +132,31 @@ export class SpacePolicy {
     if(latched(state))writePolicy(this.policy,rec,this.self,state,null,this.allowlist,this._options(now));
     if(!rec){if(latched(state))return this.policy;throw new PolicyError("RosterAbsentError","No verified roster for policy rebuild")}
     const head=verifiedHead(rec);selfCheck(this.self,rec);
+    if(!latched(state)&&emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     // Inspect every verified change since consent, including changes reverted while this instance was down.
     const after=rec.chain.filter(manifest=>manifest.version>state.consent.manifestVersion);
     let previous=rec.chain.find(manifest=>manifest.version===state.consent.manifestVersion)?.ext.commons;
     if(!previous)throw new PolicyError("ConsentHeadError","Consent must name a verified manifest version");
+    let changed=false,reconsentSignal=false;
     for(const manifest of after){
-      if(!latched(state)&&outsideAllowlist(manifest.members.filter(row=>row.status!=="removed"),this.allowlist))stop(this.policy,state,"outsider",this._options(now));
       const current=manifest.ext.commons;
       if(!isDeepStrictEqual(previous.profile,current.profile)||previous.tenant!==current.tenant){
-        if(state.softStop===null){state.softStop={reason:"reconsent",at:now};this.store.saveAdapter(this.groupId,state);this.onSignal({code:"SPACE_RECONSENT_REQUIRED",groupId:this.groupId,at:now})}
+        if(state.softStop===null){state.softStop={reason:"reconsent",at:now};changed=true;reconsentSignal=true}
       }
       previous=current;
     }
+    const scanned=rec.chain.find(manifest=>manifest.version===state.outsiderScan.version);
+    const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:state.consent.manifestVersion;
+    const unseen=rec.chain.filter(manifest=>manifest.version>scanVersion);
+    const hit=unseen.some(manifest=>outsideAllowlist(manifest.members.filter(row=>row.status!=="removed"),this.allowlist));
+    const from=state.outsiderScan,to={version:head.version,hash:manifestHash(head)};
+    if(!isDeepStrictEqual(from,to)){state.outsiderScan=to;changed=true}
+    if(hit&&!latched(state))stop(this.policy,state,"outsider",this._options(now));
+    else{
+      if(changed)this.store.saveAdapter(this.groupId,state);
+      if(hit)this.onSignal({code:"SPACE_OUTSIDER_SEEN",groupId:this.groupId,from,to});
+    }
+    if(reconsentSignal)this.onSignal({code:"SPACE_RECONSENT_REQUIRED",groupId:this.groupId,at:now});
     return writePolicy(this.policy,rec,this.self,state,head.ext.commons,this.allowlist,this._options(now));
     }catch(error){
       try{closePolicies(this.policy,this.groupId,this.engine)}catch{} // retain the original read/write failure
@@ -137,12 +174,15 @@ export class SpacePolicy {
     }
   }
   hardResume(){
-    const {rec,state,now}=this._load();verifiedHead(rec);selfCheck(this.self,rec);
+    requireSharedPolicy(this.policy,this.engine);
+    const {rec,state,now}=this._load(),head=verifiedHead(rec);selfCheck(this.self,rec);
+    if(!isDeepStrictEqual(state.outsiderScan,{version:head.version,hash:manifestHash(head)}))throw new PolicyError("OutsiderScanBehindError","Run rebuild first: outsider scan is behind the verified head");
     if(outsider(rec,state,this.allowlist))throw new PolicyError("OutsiderError","Hard resume requires an outsider-free verified head and pending set");
     state.hardStop=null;this.store.saveAdapter(this.groupId,state);
     return this.rebuild();
   }
   reconsent(consent){
+    if(emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     const {rec,state}=this._load(),head=verifiedHead(rec);
     state.consent=structuredClone(consent);state.profile=structuredClone(head.ext.commons.profile);state.softStop=null;
     validateAdapterState(state,this.groupId);
@@ -152,6 +192,7 @@ export class SpacePolicy {
   }
   /** P-7: reserved envelope id is mandatory for a remove/leave; roster FIRST, adapter SECOND. */
   applyOwnChange(action,buildOpts={}, {outboxId}={}){
+    if(emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     const {rec,state,now}=this._load(),head=verifiedHead(rec);
     let nextState=state;
     if(action==="remove"||action==="leave"){

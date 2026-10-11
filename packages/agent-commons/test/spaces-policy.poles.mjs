@@ -43,34 +43,50 @@ const mutations=[
   ["latched-write-no-close","G15 latched rebuild",text=>replace(text,'if(latched(state)){Object.assign(policy,closed(state.groupId));','if(latched(state)){')],
   ["C1-close-held-object-only","R1 C-1 trust",text=>replace(text,'new Set([policy,engine?.policy,engine?.trust?.policy])','new Set([policy])')],
   ["C2-skip-rebuild-on-adapter-failure","R1 C-2",text=>replace(text,'    }finally{this.rebuild()}','    }catch(error){throw error}\n    this.rebuild();')],
-  ["C3-head-only-outsider-check","R1 C-3",text=>replace(text,'      if(!latched(state)&&outsideAllowlist(manifest.members.filter(row=>row.status!=="removed"),this.allowlist))stop(this.policy,state,"outsider",this._options(now));\n','')],
+  ["C3-head-only-outsider-check","R1 C-3",text=>replace(text,'manifest.version>scanVersion','manifest.version>head.version')],
   ["C4-constructor-open-before-read","R1 C-4 constructor",text=>replace(text,'    Object.assign(this.policy,closed(this.groupId));\n','')],
   ["C4-rebuild-failure-stays-open","R1 C-4 missing roster closes on rebuild",text=>replace(text,'      try{closePolicies(this.policy,this.groupId,this.engine)}catch{} // retain the original read/write failure','      void 0;')],
   ["C4-check-failure-stays-open","R1 C-4 missing roster closes on check",text=>replace(text,'      try{closePolicies(this.policy,this.groupId,this.engine)}catch{}\n','')],
   ["C6-overwrite-first-stop","R1 C-6 a second mismatch",text=>replace(text,'if(state.hardStop===null)state.hardStop={reason,at:now};','state.hardStop={reason,at:now};')],
-  ["C6-close-failure-skips-other-objects","R1 C-1/C-6",text=>replace(text,'catch(error){failure??=error}','catch(error){throw error}')],
+  ["C6-close-failure-skips-other-objects","R1 C-1/C-6",text=>replace(text,'      failure??=error;','      return {closed:false,error};')],
   ["C6-non-extensible-accepted","R1 C-6 I-1",text=>replace(text,'||!Object.isExtensible(policy)','')],
-  ["C6-close-before-persist","R1 C-6 persistence",text=>replace(text,'  try{store.saveAdapter(state.groupId,state)}finally{\n    try{closePolicies(policy,state.groupId,engine)}finally{\n      onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});\n    }\n  }','  try{closePolicies(policy,state.groupId,engine);store.saveAdapter(state.groupId,state)}finally{\n    onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});\n  }')],
-  ["C6-close-failure-skips-signal","R1 C-6 persistence",text=>replace(text,'    try{closePolicies(policy,state.groupId,engine)}finally{\n      onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});\n    }','    closePolicies(policy,state.groupId,engine);\n    onSignal({code:"SPACE_CLOSED",groupId:state.groupId,...state.hardStop});')],
+  ["C6-close-before-persist","R1 C-6 persistence",text=>replace(text,'  try{store.saveAdapter(state.groupId,state);persisted=true}catch(error){failure=error}\n  const outcome=closePolicies(policy,state.groupId,engine);failure??=outcome.error;','  const outcome=closePolicies(policy,state.groupId,engine);failure??=outcome.error;\n  if(!outcome.error)try{store.saveAdapter(state.groupId,state);persisted=true}catch(error){failure=error}')],
+  ["C6-close-failure-skips-signal","R1 C-6 persistence",text=>replace(text,'  try{onSignal({code:"SPACE_CLOSED"','  if(outcome.error)throw outcome.error;\n  try{onSignal({code:"SPACE_CLOSED"')],
+  ["M40-hard-resume-clears-soft","R1d-M40",text=>replace(text,'state.hardStop=null;this.store.saveAdapter','state.hardStop=null;state.softStop=null;this.store.saveAdapter')],
+  ["M35b-latched-close-no-selfcheck","R1d-M35b",text=>replace(text,'if(latched(state)){Object.assign(policy,closed(state.groupId));checkPolicy(policy,rec,self,state,ext,allowlist,options);','if(latched(state)){Object.assign(policy,closed(state.groupId));')],
+  ["R2-cursor-follows-consent","R2 cursor resume",text=>replace(text,'const scanVersion=scanned&&manifestHash(scanned)===state.outsiderScan.hash?scanned.version:state.consent.manifestVersion;','const scanVersion=state.consent.manifestVersion;')],
+  ["R2-reconsent-moves-cursor","R1d-D1",text=>replace(text,'state.consent=structuredClone(consent);','state.outsiderScan={version:head.version,hash:manifestHash(head)};state.consent=structuredClone(consent);')],
+  ["R2-hard-resume-jumps-cursor","R2 latched scan",text=>replace(text,'    if(!isDeepStrictEqual(state.outsiderScan,{version:head.version,hash:manifestHash(head)}))throw new PolicyError("OutsiderScanBehindError","Run rebuild first: outsider scan is behind the verified head");','    state.outsiderScan={version:head.version,hash:manifestHash(head)};')],
+  ["R2-cursor-saved-before-latch","R2 cursor and outsider latch",text=>replace(text,'if(hit&&!latched(state))stop(this.policy,state,"outsider",this._options(now));','if(hit&&!latched(state)){this.store.saveAdapter(this.groupId,state);stop(this.policy,state,"outsider",this._options(now));}')],
+  ["R2-scan-skipped-while-latched","R2 latched scan",text=>replace(text,'const hit=unseen.some(','const hit=!latched(state)&&unseen.some(')],
+  ["R2-second-closing-signal","R2 latched scan",text=>replace(text,'code:"SPACE_OUTSIDER_SEEN"','code:"SPACE_CLOSED"')],
+  ["R2-version-only-cursor","R2 matching cursor version",text=>replace(text,'scanned&&manifestHash(scanned)===state.outsiderScan.hash','scanned')],
+  ["R2-persisted-always-true","R2 stop signal",text=>replace(text,'...state.hardStop,persisted,closed:outcome.closed','...state.hardStop,persisted:true,closed:outcome.closed')],
+  ["R2-closed-always-true","R2 a blocked fallback",text=>replace(text,'closed:outcome.closed','closed:true')],
+  ["R2-emergency-fallback-removed","R2 class trust",text=>replace(text,'          const replacement=closed(groupId);owner.policy=replacement;','          continue;')],
+  ["R2-direct-write-no-close-on-throw","R2 direct writePolicy",text=>replace(text,'    closePolicies(policy,state.groupId,options.engine);','    void 0;')],
+  ["R2-hard-resume-no-identity-check","R2 emergency replacement",text=>replace(text,'    requireSharedPolicy(this.policy,this.engine);','    void 0;')],
+  ["R2-own-change-no-recovery-identity-check","R2 direct emergency closure",text=>replace(text,'    if(emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);\n    const {rec,state,now}=this._load(),head=verifiedHead(rec);','    const {rec,state,now}=this._load(),head=verifiedHead(rec);')],
+  ["R2-null-agent-not-guarded","R1d-D3",text=>replace(text,'keyBindsUuaid(uuaid,agent?.publicKey)','keyBindsUuaid(uuaid,agent.publicKey)')],
+  ["R2-cursor-schema-unvalidated","R2 schema outsiderScan",text=>replace(text,'  if (!exactKeys(state.outsiderScan, OUTSIDER_SCAN_KEYS) || !posInt(state.outsiderScan.version) || !hex64(state.outsiderScan.hash)) throw badAdapter("outsiderScan: expected {version: positive safe integer, hash: 64-hex}");',''),"src/spaces/store.mjs"],
+  ["R2-legacy-cursor-defaulted","R2 legacy adapter",text=>replace(text,'    validateAdapterState(parsed, id);','    parsed.outsiderScan??={version:parsed.consent.manifestVersion,hash:"a".repeat(64)};\n    validateAdapterState(parsed, id);'),"src/spaces/store.mjs"],
 ];
 // Named equivalent/unobservable changes are observations, not distinguishing poles.
 const equivalents=[
   ["N4-P9-binding-unchecked",text=>replace(text,'&&bound&&POLICY_FIELDS','&&true&&POLICY_FIELDS')],
-  ["M40-hard-resume-clears-soft",text=>replace(text,'state.hardStop=null;this.store.saveAdapter','state.hardStop=null;state.softStop=null;this.store.saveAdapter')],
-  ["M35b-latched-close-no-selfcheck",text=>replace(text,'if(latched(state)){Object.assign(policy,closed(state.groupId));checkPolicy(policy,rec,self,state,ext,allowlist,options);','if(latched(state)){Object.assign(policy,closed(state.groupId));')],
   ["M35c-outsider-close-no-selfcheck",text=>replace(text,'if(outsider(rec,state,allowlist)){stop(policy,state,"outsider",options);checkPolicy(policy,rec,self,state,ext,allowlist,options);','if(outsider(rec,state,allowlist)){stop(policy,state,"outsider",options);')],
 ];
-function run(name,target,mutate){
+function run(name,target,mutate,file="src/spaces/policy.mjs"){
   const root=join(scratch,name);mkdirSync(root);cpSync(join(source,"src"),join(root,"src"),{recursive:true});mkdirSync(join(root,"test"));
-  cpSync(join(source,"test/spaces-policy.test.mjs"),join(root,"test/spaces-policy.test.mjs"));cpSync(join(source,"package.json"),join(root,"package.json"));symlinkSync(join(source,"node_modules"),join(root,"node_modules"));
-  if(mutate){const path=join(root,"src/spaces/policy.mjs");writeFileSync(path,mutate(readFileSync(path,"utf8")))}
-  const result=spawnSync(process.execPath,["--test","test/spaces-policy.test.mjs"],{cwd:root,encoding:"utf8",timeout:30000});
+  cpSync(join(source,"test/spaces-policy.test.mjs"),join(root,"test/spaces-policy.test.mjs"));cpSync(join(source,"test/spaces-store.test.mjs"),join(root,"test/spaces-store.test.mjs"));cpSync(join(source,"package.json"),join(root,"package.json"));symlinkSync(join(source,"node_modules"),join(root,"node_modules"));
+  if(mutate){const path=join(root,file);writeFileSync(path,mutate(readFileSync(path,"utf8")))}
+  const result=spawnSync(process.execPath,["--test","test/spaces-policy.test.mjs","test/spaces-store.test.mjs"],{cwd:root,encoding:"utf8",timeout:30000});
   const count=label=>Number(result.stdout.match(new RegExp(`# ${label} (\\d+)`))?.[1]??0),log=join(root,"result.log");writeFileSync(log,result.stdout+result.stderr);
-  if(result.signal||result.error||count("tests")!==59||count("cancelled")!==0)throw new Error(`Pole did not complete: ${name}; ${log}`);
+  if(result.signal||result.error||count("tests")!==111||count("cancelled")!==0)throw new Error(`Pole did not complete: ${name}; ${log}`);
   const failures=[...result.stdout.matchAll(/^not ok \d+ - (.+)$/gm)].map(match=>match[1]);
   return {name,target,rc:result.status,tests:count("tests"),pass:count("pass"),fail:count("fail"),failures,intendedFailureObserved:target?failures.some(f=>f.startsWith(target)):null,log};
 }
-const control=run("CONTROL"),mutants=mutations.map(([name,target,mutate])=>run(name,target,mutate));
+const control=run("CONTROL"),mutants=mutations.map(([name,target,mutate,file])=>run(name,target,mutate,file));
 const equivalentObservations=equivalents.map(([name,mutate])=>({...run(name,null,mutate),classification:"equivalent or unobservable; not a distinguishing pole"}));
 const report={scratch,control,mutants,equivalentObservations};writeFileSync(join(scratch,"poles.json"),JSON.stringify(report,null,2)+"\n");console.log(JSON.stringify(report,null,2));
 process.exitCode=control.rc===0&&mutants.every(m=>m.rc===1&&m.fail>0&&m.intendedFailureObserved)&&equivalentObservations.every(m=>m.rc===0)?0:1;

@@ -11,7 +11,7 @@
  */
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync,
+  chmodSync, closeSync, fsyncSync, mkdirSync, openSync,
   readFileSync, renameSync, writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -135,6 +135,18 @@ function atomicWrite0600(filePath, text) {
  * manifestVersion <= head.version, and (c) now - queuedAt <= 1 hour and
  * queuedAt <= now. Anything else is dropped, with one reason per entry.
  * `now` is injectable for tests.
+ *
+ * Contract: `rec` MUST be the output of `loadRoster(id)` (i.e. of the vendored
+ * `RosterStore.load`), so it is a record whose chain verified from version 1 in
+ * that same call. This function does not verify `rec` — it trusts it — and an
+ * unverified or hand-built chain is accepted and read literally.
+ *
+ * Every clause is written KEEP-ONLY-IF, never drop-if: a keep widens policy
+ * (P-7 puts pending rows into `agents`), so anything this function cannot
+ * positively prove in-window is dropped. That includes a clock it cannot
+ * compare with: a non-finite `now` (undefined, NaN, a string) drops every entry
+ * as `bad-clock`, because each comparison against it is false and a negated
+ * clause would read that as "in window".
  */
 export function prunePendingRemovals(entries, rec, now) {
   const kept = [];
@@ -154,16 +166,28 @@ export function prunePendingRemovals(entries, rec, now) {
       if (reason === null) {
         const man = rec.chain.find((m) => m.version === e.manifestVersion);
         if (!man) reason = "chain-manifest-absent";
+        // Unreachable on a VERIFIED record: verifyChain (groups-v2.mjs:281) forces
+        // contiguous versions 1..N via verifyNext's prev/version checks, so a manifest
+        // present in the chain can never exceed the head. Kept because (i) the brief
+        // names "manifestVersion <= head.version" as a keep-condition and a reviewer
+        // reads the code against that text, (ii) it is a guard against a future change
+        // to the vendored verifyChain, and (iii) this function is exported and trusts
+        // its `rec` argument, so a hand-built out-of-order chain does reach it (pinned
+        // by a unit test).
         else if (e.manifestVersion > head.version) reason = "manifest-ahead-of-head";
         else {
           const mrow = man.members?.find((r) => r.uuaid === e.uuaid);
           if (!mrow || mrow.status !== "removed") reason = "chain-not-removed";
         }
       }
-      // (c) the 1-hour window, and no future stamp
-      if (reason === null) {
-        if (e.queuedAt > now) reason = "future-stamp";
-        else if (now - e.queuedAt > PENDING_TTL_MS) reason = "expired";
+      // (c) the 1-hour window, and no future stamp. KEEP-ONLY-IF: the clause is
+      // written as the positive keep condition, so a `now` that cannot be compared
+      // (undefined, NaN, a string) drops as `bad-clock` instead of keeping. Written as
+      // "drop if X", both comparisons are false for a non-finite `now`, which reads as
+      // "in window" and keeps a removed member authorized past the 1-hour bound.
+      if (reason === null && !Number.isFinite(now)) reason = "bad-clock";
+      else if (reason === null && !(e.queuedAt <= now && now - e.queuedAt <= PENDING_TTL_MS)) {
+        reason = e.queuedAt > now ? "future-stamp" : "expired";
       }
     }
     if (reason === null) kept.push(e);
@@ -204,8 +228,10 @@ export class SpaceStore {
 
   /** Delegates to RosterStore.save, which refuses an unverified record (S-1). */
   saveRoster(rec) {
-    this._ensureSpaces();
+    // Verify before create: RosterStore.save runs checkStoreRecord and throws BEFORE
+    // its own mkdir, so an unverified record never makes spaces/ exist.
     this._roster.save(rec); // throws if the chain does not verify / head mismatches
+    this._ensureSpaces(); // tighten spaces/ to 0700 once the record is known good
   }
 
   /** The verified record, or null. Any read, parse or verify failure reads as ABSENT (F13). */
@@ -220,6 +246,7 @@ export class SpaceStore {
   saveAdapter(id, state) {
     this._assertId(id);
     validateAdapterState(state, id);
+    this._ensureSpaces(); // tighten a pre-existing spaces/ to 0700 before writing under it
     const dir = this.groupDir(id);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
@@ -235,10 +262,20 @@ export class SpaceStore {
    */
   loadAdapter(id, { now = Date.now() } = {}) {
     this._assertId(id);
+    // The `= Date.now()` default catches only `undefined`. An explicitly passed
+    // NaN or "abc" flows through to prunePendingRemovals, whose keep-only-if clause
+    // drops every entry as `bad-clock` — a non-finite clock fails closed here too.
     const p = this.adapterPath(id);
-    if (!existsSync(p)) return null;
+    // Only ENOENT means "absent". Read inside try/catch instead of existsSync,
+    // which reports EACCES and ENOTDIR as absent too — so a grp dir at mode 000, or a
+    // grp path replaced by a regular file, would read a latched hardStop as "no state"
+    // and widen authority (CL-1, HS-1).
     let raw;
-    try { raw = readFileSync(p, "utf-8"); } catch (e) { throw badAdapter(`unreadable: ${e.message}`); }
+    try { raw = readFileSync(p, "utf-8"); }
+    catch (e) {
+      if (e.code === "ENOENT") return null;
+      throw badAdapter(`unreadable: ${e.code}: ${e.message}`);
+    }
     let parsed;
     try { parsed = JSON.parse(raw); } catch (e) { throw badAdapter(`not valid JSON: ${e.message}`); }
     validateAdapterState(parsed, id); // throws AdapterStateError on a bad shape
@@ -260,9 +297,15 @@ export class SpaceStore {
   /** A missing file means empty cursors; a bad shape throws (never defaults). */
   loadDispatcher() {
     const p = this.dispatcherPath();
-    if (!existsSync(p)) return { v: DISPATCHER_V, cursors: {} };
+    // Only ENOENT means "empty cursors". Any other read failure (EACCES on a
+    // spaces/ at mode 000, ENOTDIR if the path is a file) throws the named error —
+    // existsSync would report those as absent and silently lose every cursor.
     let raw;
-    try { raw = readFileSync(p, "utf-8"); } catch (e) { throw badDispatcher(`unreadable: ${e.message}`); }
+    try { raw = readFileSync(p, "utf-8"); }
+    catch (e) {
+      if (e.code === "ENOENT") return { v: DISPATCHER_V, cursors: {} };
+      throw badDispatcher(`unreadable: ${e.code}: ${e.message}`);
+    }
     let parsed;
     try { parsed = JSON.parse(raw); } catch (e) { throw badDispatcher(`not valid JSON: ${e.message}`); }
     validateDispatcher(parsed);

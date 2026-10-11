@@ -5,7 +5,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync, renameSync, mkdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,10 @@ const mode = (p) => statSync(p).mode & 0o777;
 // ── P1: S-3 load-time pruning ─────────────────────────────────────────────
 
 test("P1 CONTROL: S-3 keeps a valid pending removal and drops every other kind, with a reason each", () => {
+  // The test must not take its TTL from the code under test. Use the literal and pin
+  // the constant to it, so a changed PENDING_TTL_MS is caught here.
+  assert.equal(PENDING_TTL_MS, 3_600_000, "S-3 TTL is exactly 1 hour");
+  const TTL = 3_600_000;
   const { rec, groupId, m1, m2 } = fixtureRoster();
   const now = 1_800_000_000_000;
   const valid = { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-1" };
@@ -77,7 +81,7 @@ test("P1 CONTROL: S-3 keeps a valid pending removal and drops every other kind, 
     valid,
     { ...valid, uuaid: m2.uuaid, key: m2.publicKeyHex, outboxId: "ob-2" }, // not removed in the head
     { ...valid, key: "d".repeat(64), outboxId: "ob-3" }, // wrong key
-    { ...valid, queuedAt: now - PENDING_TTL_MS - 1, outboxId: "ob-4" }, // older than 1 hour
+    { ...valid, queuedAt: now - TTL - 1, outboxId: "ob-4" }, // older than 1 hour
     { ...valid, queuedAt: now + 1000, outboxId: "ob-5" }, // future-stamped
     { ...valid, manifestVersion: 99, outboxId: "ob-6" }, // no such manifest in the chain
   ];
@@ -92,6 +96,74 @@ test("P1 CONTROL: S-3 keeps a valid pending removal and drops every other kind, 
   assert.deepEqual(gone.dropped.map((d) => d.reason), entries.map(() => "roster-absent"));
 });
 
+test("P1 CONTROL: S-3 window boundaries — exactly-at-TTL and exactly-at-now are kept; TTL+1 expires, now+1 is future-stamped", () => {
+  const { rec, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const TTL = 3_600_000; // literal, not the module's constant
+  const at = (queuedAt, outboxId) => ({ uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt, outboxId });
+  const atTTL = at(now - TTL, "at-ttl");       // age exactly 1 h -> keep (<= TTL)
+  const atNow = at(now, "at-now");             // age 0 -> keep
+  const pastTTL = at(now - TTL - 1, "past-ttl"); // age TTL+1 -> expired
+  const aheadNow = at(now + 1, "ahead-now");     // queuedAt now+1 -> future-stamp
+  const { kept, dropped } = prunePendingRemovals([atTTL, atNow, pastTTL, aheadNow], rec, now);
+  assert.deepEqual(kept.map((e) => e.outboxId), ["at-ttl", "at-now"]);
+  assert.deepEqual(dropped.map((d) => [d.entry.outboxId, d.reason]), [["past-ttl", "expired"], ["ahead-now", "future-stamp"]]);
+});
+
+test("P1 CONTROL: a non-finite clock keeps nothing — undefined, NaN and 'abc' each drop as bad-clock (S-3 fails closed)", () => {
+  const { rec, groupId, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  // An entry that a finite clock keeps: age 1 s, member removed at the head, key matches.
+  const fresh = { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-fresh" };
+  assert.equal(prunePendingRemovals([fresh], rec, now).kept.length, 1, "control: a finite clock keeps it");
+  for (const bad of [undefined, NaN, "abc"]) {
+    const { kept, dropped } = prunePendingRemovals([fresh], rec, bad);
+    assert.equal(kept.length, 0, `now=${String(bad)} keeps 0 entries`);
+    assert.deepEqual(dropped.map((d) => d.reason), ["bad-clock"], `now=${String(bad)} drops as bad-clock`);
+  }
+  // The loadAdapter seam: its `= Date.now()` default catches only an absent option, so
+  // an explicitly passed NaN or "abc" must also fail closed through the store.
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    store.saveRoster(rec);
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now));
+    for (const bad of [NaN, "abc"]) {
+      const out = store.loadAdapter(groupId, { now: bad });
+      assert.equal(out.state.pendingRemovals.length, 0, `loadAdapter now=${String(bad)} keeps 0`);
+      assert.deepEqual(out.dropped.map((d) => d.reason), ["bad-clock"]);
+    }
+    // An absent option falls back to the real clock. The fixture's queuedAt is in 2027,
+    // i.e. ahead of the real clock, so the entry must not be kept either (future-stamp).
+    assert.equal(store.loadAdapter(groupId, {}).state.pendingRemovals.length, 0);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P1 CONTROL: the manifest-ahead-of-head guard fires on a hand-built out-of-order chain", () => {
+  // Unreachable on a VERIFIED record (verifyChain forces contiguous 1..N), but
+  // prunePendingRemovals is exported and trusts its `rec`, so a synthetic chain reaches it.
+  const { m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const row = { uuaid: m1.uuaid, key: m1.publicKeyHex, status: "removed" };
+  const synthetic = { chain: [{ version: 1, members: [row] }, { version: 3, members: [row] }, { version: 2, members: [row] }] };
+  const entry = { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 3, queuedAt: now - 1, outboxId: "ob-ahead" };
+  const { kept, dropped } = prunePendingRemovals([entry], synthetic, now);
+  assert.equal(kept.length, 0);
+  assert.deepEqual(dropped.map((d) => d.reason), ["manifest-ahead-of-head"]);
+});
+
+test("P1 CONTROL: manifestVersion 1 against a v2 removal drops as chain-not-removed; an unknown uuaid drops as head-no-row", () => {
+  const { rec, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  // v1 (genesis) still shows m1 as invited/active, not removed -> chain-not-removed.
+  const v1 = { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 1, queuedAt: now - 1000, outboxId: "ob-v1" };
+  // An uuaid with no row anywhere in the head -> head-no-row.
+  const stranger = { uuaid: "uu-" + "e".repeat(16), key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-stranger" };
+  const { kept, dropped } = prunePendingRemovals([v1, stranger], rec, now);
+  assert.equal(kept.length, 0);
+  assert.deepEqual(dropped.map((d) => [d.entry.outboxId, d.reason]), [["ob-v1", "chain-not-removed"], ["ob-stranger", "head-no-row"]]);
+});
+
 test("P1 CONTROL: loadAdapter prunes against the roster verified in the same call", () => {
   const home = mkHome();
   try {
@@ -102,7 +174,7 @@ test("P1 CONTROL: loadAdapter prunes against the roster verified in the same cal
     const adapter = fixtureAdapter(groupId, m1, now, {
       pendingRemovals: [
         { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-keep" },
-        { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - PENDING_TTL_MS - 1, outboxId: "ob-expired" },
+        { uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 3_600_000 - 1, outboxId: "ob-expired" },
       ],
     });
     store.saveAdapter(groupId, adapter);
@@ -112,6 +184,36 @@ test("P1 CONTROL: loadAdapter prunes against the roster verified in the same cal
     assert.deepEqual(out.dropped.map((d) => [d.entry.outboxId, d.reason]), [["ob-expired", "expired"]]);
     // The on-disk file is NOT rewritten by a load.
     assert.equal(JSON.parse(readFileSync(store.adapterPath(groupId), "utf-8")).pendingRemovals.length, 2);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P1 CONTROL: loadAdapter with the roster tampered, then missing, drops every entry as roster-absent", () => {
+  const home = mkHome();
+  try {
+    const { rec, groupId, m1 } = fixtureRoster();
+    const now = 1_800_000_000_000;
+    const store = new SpaceStore(home);
+    store.saveRoster(rec);
+    const adapter = fixtureAdapter(groupId, m1, now, {
+      pendingRemovals: [{ uuaid: m1.uuaid, key: m1.publicKeyHex, manifestVersion: 2, queuedAt: now - 1000, outboxId: "ob-1" }],
+    });
+    store.saveAdapter(groupId, adapter);
+    assert.equal(store.loadAdapter(groupId, { now }).state.pendingRemovals.length, 1, "control: verified roster keeps the entry");
+
+    // Tamper the roster file (flip a chain byte): it no longer verifies -> loadRoster is null.
+    const rp = store.rosterPath(groupId);
+    const raw = readFileSync(rp, "utf-8");
+    const mark = raw.indexOf('"signature":"') + '"signature":"'.length;
+    writeFileSync(rp, raw.slice(0, mark) + (raw[mark] === "0" ? "1" : "0") + raw.slice(mark + 1), { mode: 0o600 });
+    const tampered = store.loadAdapter(groupId, { now });
+    assert.equal(tampered.state.pendingRemovals.length, 0, "tampered roster keeps nothing");
+    assert.deepEqual(tampered.dropped.map((d) => d.reason), ["roster-absent"]);
+
+    // Delete the roster file entirely -> still roster-absent (the adapter itself is intact).
+    rmSync(rp);
+    const missing = store.loadAdapter(groupId, { now });
+    assert.equal(missing.state.pendingRemovals.length, 0, "missing roster keeps nothing");
+    assert.deepEqual(missing.dropped.map((d) => d.reason), ["roster-absent"]);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -141,7 +243,15 @@ test("P2 CONTROL: a flipped chain byte loads as null; save refuses an unverified
     const bad = structuredClone(rec);
     bad.chain[1].name = "tampered";
     assert.throws(() => store.saveRoster(bad), /refusing to write/);
-    assert.throws(() => store.saveRoster({ v: rec.v, id: rec.id }), /refusing to write|Error/);
+    assert.throws(() => store.saveRoster({ v: rec.v, id: rec.id }), /refusing to write/);
+    // The refusal happens before any directory is created — a refused save
+    // leaves no trace under a home that had none.
+    const freshHome = mkHome();
+    try {
+      const fresh = new SpaceStore(freshHome);
+      assert.throws(() => fresh.saveRoster(bad), /refusing to write/);
+      assert.equal(existsSync(fresh.spacesHome), false, "a refused saveRoster creates no spaces/");
+    } finally { rmSync(freshHome, { recursive: true, force: true }); }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -149,6 +259,10 @@ test("P2 CONTROL: a flipped chain byte loads as null; save refuses an unverified
 
 test("P3 CONTROL: spaces/ and grp dirs are 0700, files 0600, no *.tmp left", () => {
   const home = mkHome();
+  // Pin umask so the 0600 mode control is not umask-dependent: under umask 077 the
+  // default file mode is already 0600 and dropping mode:0o600 would go unnoticed.
+  // Force 022 for the body, restore it after.
+  const savedUmask = process.umask(0o022);
   try {
     const { rec, groupId, m1 } = fixtureRoster();
     const now = 1_800_000_000_000;
@@ -169,6 +283,73 @@ test("P3 CONTROL: spaces/ and grp dirs are 0700, files 0600, no *.tmp left", () 
       for (const f of readdirSync(d)) if (f.includes(".tmp-")) tmps.push(join(d, f));
     }
     assert.deepEqual(tmps, [], "no temp file survives a save");
+  } finally {
+    process.umask(savedUmask);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("P3 CONTROL: saving twice replaces adapter.json by rename — the inode changes (atomic, not in place)", () => {
+  const home = mkHome();
+  try {
+    const { rec, groupId, m1 } = fixtureRoster();
+    const now = 1_800_000_000_000;
+    const store = new SpaceStore(home);
+    store.saveRoster(rec);
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now));
+    const p = store.adapterPath(groupId);
+    const ino1 = statSync(p).ino;
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now)); // save again
+    const ino2 = statSync(p).ino;
+    assert.notEqual(ino1, ino2, "a second save renames a fresh temp over the file, so the inode changes");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P3 CONTROL: saveAdapter tightens a pre-existing spaces/ at 0755 to 0700", () => {
+  const home = mkHome();
+  try {
+    const { rec, groupId, m1 } = fixtureRoster();
+    const now = 1_800_000_000_000;
+    const store = new SpaceStore(home);
+    mkdirSync(store.spacesHome, { mode: 0o755 });
+    chmodSync(store.spacesHome, 0o755);
+    assert.equal(mode(store.spacesHome), 0o755, "precondition: spaces/ starts at 0755");
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now)); // saveAdapter calls _ensureSpaces
+    assert.equal(mode(store.spacesHome), 0o700, "saveAdapter tightens spaces/ to 0700");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// ── only ENOENT means absent: a non-ENOENT read failure must THROW ─────────
+
+test("P5 CONTROL: grp-<id> replaced by a regular file makes loadAdapter throw AdapterStateError, never null (CL-1, HS-1)", () => {
+  const home = mkHome();
+  try {
+    const { rec, groupId, m1 } = fixtureRoster();
+    const now = 1_800_000_000_000;
+    const store = new SpaceStore(home);
+    store.saveRoster(rec);
+    // Save a latched hardStop, then replace the grp dir with a regular file (ENOTDIR on read).
+    store.saveAdapter(groupId, fixtureAdapter(groupId, m1, now, { hardStop: { reason: "outsider", at: now } }));
+    renameSync(store.groupDir(groupId), store.groupDir(groupId) + ".moved");
+    writeFileSync(store.groupDir(groupId), "x", { mode: 0o600 });
+    // A stat-based absence check would say "absent" and return null, losing the latched hardStop.
+    assert.throws(() => store.loadAdapter(groupId, { now }),
+      (e) => e instanceof SpaceStoreError && e.name === "AdapterStateError",
+      "a grp path that is a file throws, never reads as null");
+    chmodSync(store.groupDir(groupId), 0o644);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("P5 CONTROL: spaces/ replaced by a regular file makes loadDispatcher throw DispatcherStateError, never empty cursors", () => {
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    store.saveDispatcher({ v: DISPATCHER_V, cursors: { "carrier://pole/one": 5 } });
+    renameSync(store.spacesHome, store.spacesHome + ".moved");
+    writeFileSync(store.spacesHome, "x", { mode: 0o600 });
+    assert.throws(() => store.loadDispatcher(),
+      (e) => e instanceof SpaceStoreError && e.name === "DispatcherStateError",
+      "a spaces/ path that is a file throws, never reads as empty cursors");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -239,6 +420,38 @@ test("P5 CONTROL: a body in heldRefs, a top-level policy/agents key and hardStop
     assert.throws(() => store.loadDispatcher(), { name: "DispatcherStateError" });
     writeFileSync(store.dispatcherPath(), "nope", { mode: 0o600 });
     assert.throws(() => store.loadDispatcher(), { name: "DispatcherStateError" });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// ── a policy key is refused at EVERY level (S-4), and a cross-id save throws ───
+
+test("P5 CONTROL: a policy key at every level is refused (S-4); saveAdapter under a mismatched groupId throws", () => {
+  const { groupId, m1 } = fixtureRoster();
+  const now = 1_800_000_000_000;
+  const good = fixtureAdapter(groupId, m1, now);
+  validateAdapterState(good, groupId); // the good shape passes
+
+  // Table-driven: a `policy` key inserted at each level must be refused (S-4).
+  const cases = [
+    ["channels", { ...good, channels: { ...good.channels, policy: {} } }],
+    ["profile", { ...good, profile: { ...good.profile, policy: {} } }],
+    ["consent", { ...good, consent: { ...good.consent, policy: {} } }],
+    ["hardStop", { ...good, hardStop: { ...good.hardStop, policy: {} } }],
+    ["softStop", { ...good, softStop: { ...good.softStop, policy: {} } }],
+    ["pendingRemovals entry", { ...good, pendingRemovals: [{ ...good.pendingRemovals[0], policy: {} }] }],
+  ];
+  for (const [level, state] of cases) {
+    assert.throws(() => validateAdapterState(state, groupId), { name: "AdapterStateError" }, `policy at ${level} refused`);
+  }
+
+  // A state whose groupId differs from the dir it is saved under is refused.
+  const other = "grp-" + "f".repeat(32);
+  const home = mkHome();
+  try {
+    const store = new SpaceStore(home);
+    assert.throws(() => store.saveAdapter(other, good), { name: "AdapterStateError" }, "saveAdapter(idB, stateForA) throws");
+    // dispatcher top level: a policy key is refused too (S-4).
+    assert.throws(() => store.saveDispatcher({ v: DISPATCHER_V, cursors: {}, policy: {} }), { name: "DispatcherStateError" });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

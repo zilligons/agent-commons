@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentCommons,CommonsStore,RegistryTrust,Keychain,createProfile,signDocument,runAgentLoop,seal } from "../src/index.mjs";
-import { isTransientTrustFailure } from "../src/trust.mjs";
+import { isTransientTrustFailure, REQUIRED_STANDARDS } from "../src/trust.mjs";
+import { assertPolicyIdentity } from "../src/spaces/policy.mjs";
+import { CommonsCarrier } from "../src/carrier.mjs";
 const CAPS=["commons:message","commons:relay","commons:evolve","commons:contribute","commons:recover"];
 function key(){const k=new Keychain("unused");k._identity=Keychain.generate();return k}
 function setup(n=3){
@@ -101,4 +103,103 @@ test("budget values above hard ceilings are rejected; responder failure does not
   await assert.rejects(runAgentLoop({runtime:rt,respond:async()=>null,budget:{maxSends:100000}}),/Invalid loop budget/);
   const r=await runAgentLoop({runtime:rt,respond:async()=>{throw new Error("model down")},maxTurns:2,intervalMs:500});
   assert.equal(r.turns,2);
+});
+
+
+test("S7 T1 entry denies before validation or provider work",async()=>{
+  const {keys,policy}=setup(1),k=keys[0]._identity;let calls=0;
+  const trust=new RegistryTrust({policy,client:{resolve:()=>{calls++;throw new Error("provider")}},fetchImpl:()=>{calls++;throw new Error("provider")}});
+  assert.equal((await trust.authorize(k.uuaid,k.publicKeyHex)).tier,"local-policy-pinned");
+  await assert.rejects(trust.authorize("bad",k.publicKeyHex),{code:"AGENT_ONLY"});
+  trust.denyPermanently();trust.denyPermanently();
+  await assert.rejects(trust.authorize("bad","bad"),{code:"NOT_ADMITTED",transient:false});assert.equal(calls,0);
+});
+test("S7 T3 captured same-receiver method stays denied after freeze and policy replacement",async()=>{
+  const {keys,policy}=setup(1),k=keys[0]._identity,trust=new RegistryTrust({policy}),cached=trust.authorize.bind(trust);
+  const held=await cached(k.uuaid,k.publicKeyHex);trust.policy=Object.freeze(structuredClone(policy));Object.freeze(trust);
+  assert.equal(RegistryTrust.isCanonicalTrust(trust),true);assert.equal((await cached(k.uuaid,k.publicKeyHex)).tier,"local-policy-pinned");trust.denyPermanently();
+  await assert.rejects(cached(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});assert.equal(held.tier,"local-policy-pinned");
+  const replacement=new RegistryTrust({policy:structuredClone(policy)});replacement.denyPermanently();replacement.policy=structuredClone(policy);
+  await assert.rejects(replacement.authorize(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});
+});
+test("S7 T5 local final fence observes reentrant mode getter denial",async()=>{
+  const {keys,policy}=setup(1),k=keys[0]._identity,trust=new RegistryTrust({policy});
+  Object.defineProperty(policy,"mode",{get(){trust.denyPermanently();return "local"},configurable:true});
+  await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});
+});
+for(const pause of ["standards","resolve","verify"])test(`S7 T4 global final fence after ${pause}`,async()=>{
+  const {keys,policy}=setup(1),k=keys[0]._identity,pins=Object.fromEntries(REQUIRED_STANDARDS.map(code=>[code,"a".repeat(64)]));
+  const globalPolicy={...policy,mode:"global",offline:false,standardPins:pins};globalPolicy.agents[k.uuaid].credentialId="fixture-credential";
+  const reached=Promise.withResolvers(),release=Promise.withResolvers();let paused=false;
+  const trust=new RegistryTrust({policy:globalPolicy,env:{},client:{
+    resolve:async()=>{if(pause==="resolve"){paused=true;reached.resolve();await release.promise}return {uuaid:k.uuaid,status:"active"}},
+    verify:async()=>{if(pause==="verify"){paused=true;reached.resolve();await release.promise}return {credential_id:"fixture-credential",agent_uuaid:k.uuaid,valid:true,signatureValid:true,active:true,notExpired:true}},
+  },fetchImpl:async()=>{if(pause==="standards"){paused=true;reached.resolve();await release.promise}return {ok:true,json:async()=>({standards:REQUIRED_STANDARDS.map(code=>({code,stage:"published",content_hash:pins[code]}))})}}});
+  const pending=trust.authorize(k.uuaid,k.publicKeyHex),rejected=assert.rejects(pending,{code:"NOT_ADMITTED"});
+  await reached.promise;assert.equal(paused,true);trust.denyPermanently();release.resolve();await rejected;
+  const healthy=new RegistryTrust({policy:globalPolicy,env:{},client:{resolve:async()=>({uuaid:k.uuaid,status:"active"}),verify:async()=>({credential_id:"fixture-credential",agent_uuaid:k.uuaid,valid:true,signatureValid:true,active:true,notExpired:true})},fetchImpl:async()=>({ok:true,json:async()=>({standards:REQUIRED_STANDARDS.map(code=>({code,stage:"published",content_hash:pins[code]}))})})});
+  assert.equal((await healthy.authorize(k.uuaid,k.publicKeyHex)).tier,"registry-credential-and-policy");
+});
+test("S7 global result construction precedes the final fence",async()=>{
+  const {keys,policy}=setup(1),k=keys[0]._identity,pins=Object.fromEntries(REQUIRED_STANDARDS.map(code=>[code,"b".repeat(64)]));let reads=0,trust;
+  const binding=policy.agents[k.uuaid];Object.defineProperty(binding,"credentialId",{get(){if(++reads===4)trust.denyPermanently();return "fixture-credential"}});
+  trust=new RegistryTrust({policy:{...policy,mode:"global",offline:false,standardPins:pins},env:{},client:{resolve:async()=>({uuaid:k.uuaid,status:"active"}),verify:async()=>({credential_id:"fixture-credential",agent_uuaid:k.uuaid,valid:true,signatureValid:true,active:true,notExpired:true})},fetchImpl:async()=>({ok:true,json:async()=>({standards:REQUIRED_STANDARDS.map(code=>({code,stage:"published",content_hash:pins[code]}))})})});
+  await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});assert.equal(reads,4);
+});
+test("S7 T9 brand refuses a prototype-shaped impostor without other masking guards",()=>{
+  const policy={mode:"local"},impostor=Object.assign(Object.create(RegistryTrust.prototype),{policy});
+  assert.equal(RegistryTrust.isCanonicalTrust(impostor),false);assert.throws(()=>assertPolicyIdentity({policy,trust:impostor}),{name:"PolicyIdentityError"});
+  const genuine=new RegistryTrust({policy,client:{}});assert.equal(RegistryTrust.isCanonicalTrust(genuine),true);assert.equal(assertPolicyIdentity({policy,trust:genuine}),policy);
+});
+for(const kind of ["getter","throwing","alternating","shadow"])test(`S7 T9 own ${kind} route rejected without getter invocation`,()=>{
+  const policy={mode:"local"},trust=new RegistryTrust({policy,client:{}}),canonical=trust.authorize;let reads=0;
+  Object.defineProperty(trust,"authorize",kind==="shadow"?{value:()=>true}:{get(){reads++;if(kind==="throwing")throw new Error("getter invoked");return kind==="alternating"&&reads>1?()=>true:canonical}});
+  assert.equal(RegistryTrust.isCanonicalTrust(trust),false);assert.throws(()=>assertPolicyIdentity({policy,trust}),{name:"PolicyIdentityError"});assert.equal(reads,0);
+});
+test("S7 T9 ordinary Sub admission exclusion paired with M5",()=>{
+  class Sub extends RegistryTrust {}
+  const policy={mode:"local"},trust=new Sub({policy,client:{}});
+  assert.equal(RegistryTrust.isCanonicalTrust(trust),false);assert.throws(()=>assertPolicyIdentity({policy,trust}),{name:"PolicyIdentityError"});
+});
+for(const kind of ["data","throwing","stalling-recorder"])test(`S7 T9 Proxy-node ${kind} observer sees no descriptor or prototype operation`,()=>{
+  const trust=new RegistryTrust({policy:{mode:"local"},client:{}}),canonical=trust.authorize;let operations=0;
+  const node=new Proxy(Object.create(RegistryTrust.prototype),{getOwnPropertyDescriptor(){operations++;if(kind!=="data")throw new Error("recorded unsafe trap; no actual stall");return {value:canonical,configurable:true,writable:true}},getPrototypeOf(){operations++;return RegistryTrust.prototype}});
+  Object.setPrototypeOf(trust,node);let result,error;try{result=RegistryTrust.isCanonicalTrust(trust)}catch(caught){error=caught}
+  assert.equal(operations,0);assert.ifError(error);assert.equal(result,false);
+});
+test("S7 T9 Proxy-of-genuine brand short-circuit performs no object operation",()=>{
+  const trust=new RegistryTrust({policy:{mode:"local"},client:{}});let operations=0;
+  const proxy=new Proxy(trust,{get(){operations++;throw new Error("get")},getOwnPropertyDescriptor(){operations++;throw new Error("descriptor")},getPrototypeOf(){operations++;throw new Error("prototype")}});
+  assert.equal(RegistryTrust.isCanonicalTrust(proxy),false);assert.equal(operations,0);
+});
+test("S7 T9 captured anchor rejects a replaced prototype data function",()=>{
+  const descriptor=Object.getOwnPropertyDescriptor(RegistryTrust.prototype,"authorize"),trust=new RegistryTrust({policy:{mode:"local"},client:{}});
+  try{Object.defineProperty(RegistryTrust.prototype,"authorize",{...descriptor,value:()=>true});assert.equal(RegistryTrust.isCanonicalTrust(trust),false)}finally{Object.defineProperty(RegistryTrust.prototype,"authorize",descriptor)}
+});
+test("S7 T9 captured anchor never invokes a live prototype getter",()=>{
+  const descriptor=Object.getOwnPropertyDescriptor(RegistryTrust.prototype,"authorize"),trust=new RegistryTrust({policy:{mode:"local"},client:{}});let reads=0;
+  Object.defineProperty(trust,"authorize",{value:descriptor.value});
+  try{Object.defineProperty(RegistryTrust.prototype,"authorize",{configurable:true,get(){reads++;return descriptor.value}});assert.equal(RegistryTrust.isCanonicalTrust(trust),true);assert.equal(reads,0)}finally{Object.defineProperty(RegistryTrust.prototype,"authorize",descriptor)}
+});
+test("S7 native runtime and public carrier consumers use permanent denial",async()=>{
+  const {keys,runtimes:[a,b],profile}=setup(2);const message=await a.send({recipient:b.uuaid,profileId:profile.id,body:"semantic equivalence"});
+  b.trust.denyPermanently();await assert.rejects(b.receive(message.envelope),{code:"NOT_ADMITTED"});
+  a.trust.denyPermanently();await assert.rejects(a.send({recipient:b.uuaid,profileId:profile.id,body:"semantic equivalence"}),{code:"NOT_ADMITTED"});
+  const trust=new RegistryTrust({policy:{mode:"global",agents:{}},client:{}});trust.denyPermanently();const carrier=new CommonsCarrier({trust,keychain:keys[0],publicUrl:"https://carrier.invalid"});
+  try{await assert.rejects(carrier.listen(0,"0.0.0.0"),{code:"NOT_ADMITTED"});assert.equal(carrier.server,null)}finally{carrier.store.close()}
+});
+
+
+test("S7 P6 canonical trust uses object intrinsics captured before post-load replacement",()=>{
+  const genuine=new RegistryTrust({policy:{mode:"local"},client:{}}),proxy=new Proxy(genuine,{});
+  class Sub extends RegistryTrust {}
+  const sub=new Sub({policy:{mode:"local"},client:{}}),accessor=new RegistryTrust({policy:{mode:"local"},client:{}});let accessorHits=0,stubHits=0,verdicts;
+  Object.defineProperty(accessor,"authorize",{get(){accessorHits++;return genuine.authorize}});
+  const descriptor=Object.getOwnPropertyDescriptor,prototype=Object.getPrototypeOf;
+  const hostile=()=>{stubHits++;throw new Error("post-load object intrinsic invoked")};
+  try{
+    Object.getOwnPropertyDescriptor=hostile;Object.getPrototypeOf=hostile;
+    verdicts=[genuine,proxy,sub,accessor].map(value=>RegistryTrust.isCanonicalTrust(value));
+  }finally{Object.getOwnPropertyDescriptor=descriptor;Object.getPrototypeOf=prototype}
+  assert.deepEqual(verdicts,[true,false,false,false]);assert.equal(stubHits,0);assert.equal(accessorHits,0);
 });

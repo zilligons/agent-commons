@@ -8,6 +8,22 @@ export class TrustError extends Error { constructor(code,message,{transient=fals
 export function isTransientTrustFailure(error){if(error?.transient===true)return true;const status=error?.status??error?.statusCode;return error!=null&&!(error instanceof TrustError)&&(!Number.isInteger(status)||status>=500||status===408||status===429)}
 async function backend(fn,code){try{return await fn()}catch(error){if(error instanceof TrustError)throw error;if(isTransientTrustFailure(error))throw new TrustError(code,`Trust backend unavailable: ${String(error?.message??error).slice(0,120)}`,{transient:true});throw error}}
 export class RegistryTrust {
+  #denied=false;
+  static isCanonicalTrust(value){
+    if(value===null||(typeof value!=="object"&&typeof value!=="function")||!(#denied in value))return false;
+    let current=value,found=false;
+    while(current!==null){
+      if(current!==value&&current!==TRUST_PROTOTYPE&&current!==OBJECT_PROTOTYPE)return false;
+      const descriptor=getOwnPropertyDescriptor(current,"authorize");
+      if(!found&&descriptor){
+        if(!("value" in descriptor)||descriptor.value!==CANONICAL_AUTHORIZE)return false;
+        found=true;
+      }
+      current=getPrototypeOf(current);
+    }
+    return found;
+  }
+  denyPermanently(){this.#denied=true}
   constructor({policy={},client,fetchImpl=fetch,env=process.env}={}) {
     if(policy.mode!==undefined&&!["local","global"].includes(policy.mode))throw new TrustError("INVALID_POLICY_MODE","Policy mode must be explicitly local or global");
     this.policy=policy;this.policy.mode??="local";this.env=env;
@@ -34,6 +50,7 @@ export class RegistryTrust {
     return list;
   }
   async authorize(uuaid,publicKey,capability="commons:message"){
+    if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
     if(!/^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/.test(uuaid)||!/^[0-9a-f]{64}$/.test(publicKey))throw new TrustError("AGENT_ONLY","A cryptographically bound agent UUAID is required");
     if(Keychain.localIdFromKey(Buffer.from(publicKey,"hex"))!==uuaid.split(":")[3])throw new TrustError("KEY_BINDING","Agent UUAID is not owned by the presented key");
     if(this.policy.blocked?.includes(uuaid))throw new TrustError("SUBJECT_BLOCKED","Subject is blocked");
@@ -41,7 +58,11 @@ export class RegistryTrust {
     // One key must be one voice: reject any policy that admits the same key under several UUAID spellings.
     if(binding&&Object.values(this.policy.agents).filter(a=>a?.publicKey===publicKey).length!==1)throw new TrustError("DUPLICATE_KEY","One public key is admitted under more than one UUAID; Sybil-ambiguous policy is denied");
     if(!binding||binding.publicKey!==publicKey||binding.kind!=="agent"||!binding.capabilities?.includes(capability))throw new TrustError("NOT_ADMITTED","Subject/key/capability has not been admitted by this deployment");
-    if(this.policy.mode!=="global")return {tier:"local-policy-pinned",uuaid,capability,certified:false};
+    if(this.policy.mode!=="global"){
+      const result={tier:"local-policy-pinned",uuaid,capability,certified:false};
+      if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
+      return result;
+    }
     if(!(this.policy.registryUrl??"https://api.uuaid.org").startsWith("https://"))throw new TrustError("INSECURE_REGISTRY","Global registry verification requires HTTPS");
     await this.standards();
     const resolution=await backend(()=>this.client.resolve(uuaid),"REGISTRY_UNAVAILABLE");
@@ -52,7 +73,9 @@ export class RegistryTrust {
     if(verdict.credential_id!==binding.credentialId||verdict.agent_uuaid!==uuaid||![verdict.valid,verdict.signatureValid,verdict.active,verdict.notExpired].every(v=>v===true))throw new TrustError("CREDENTIAL_INVALID","Credential signature, subject, active status, or expiry failed");
     // Capabilities are operator policy grants. A valid credential alone does not
     // imply an IAASO accreditation role or permission to ratify a standard.
-    return {tier:"registry-credential-and-policy",uuaid,capability,credentialId:binding.credentialId,certified:false};
+    const result={tier:"registry-credential-and-policy",uuaid,capability,credentialId:binding.credentialId,certified:false};
+    if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
+    return result;
   }
   async publishedProfilePin(code,profileHash){
     await this.standards();
@@ -63,3 +86,8 @@ export class RegistryTrust {
     return record;
   }
 }
+const TRUST_PROTOTYPE=RegistryTrust.prototype;
+const OBJECT_PROTOTYPE=Object.prototype;
+const CANONICAL_AUTHORIZE=RegistryTrust.prototype.authorize;
+const getOwnPropertyDescriptor=Object.getOwnPropertyDescriptor;
+const getPrototypeOf=Object.getPrototypeOf;

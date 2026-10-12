@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { AgentCommons, Keychain, createProfile, digest, signDocument, proposeAlias, seal } from "../src/index.mjs";
+import { spawnSync } from "node:child_process";
+import { AgentCommons, Keychain, createProfile, digest, signDocument, proposeAlias, seal, RegistryTrust } from "../src/index.mjs";
 import { buildGenesis, buildNext, signManifest, newRecord } from "../src/vendor/pillar/groups-v2.mjs";
 import { SpaceStore, ADAPTER_V, PENDING_TTL_MS } from "../src/spaces/store.mjs";
 import { signAndApplyNext, verifiedHead } from "../src/spaces/manifest.mjs";
@@ -11,7 +13,7 @@ import { SpacePolicy, assertPolicyIdentity, writePolicy } from "../src/spaces/po
 import { manifestHash } from "../src/spaces/pillar-group.mjs";
 
 function fixture(t){
-  const home=mkdtempSync("/tmp/spaces-policy-"),store=new SpaceStore(home),keys=Array.from({length:4},()=>{const k=new Keychain("unused");k._identity=Keychain.generate();return k});
+  const home=mkdtempSync(join(tmpdir(),"spaces-policy-")),store=new SpaceStore(home),keys=Array.from({length:4},()=>{const k=new Keychain("unused");k._identity=Keychain.generate();return k});
   const [owner,member,invited,outsider]=keys,uid=k=>k._identity.uuaid,key=k=>k._identity.publicKeyHex;
   const profile=createProfile({namespace:"local/space-policy",name:"Policy fixture",scope:"local",lexicon:{},fixtures:["Repeated protocol phrase Repeated protocol phrase", "Repeated protocol phrase Repeated protocol phrase"]});
   const commons={v:"commons/1",profile:{id:profile.id,hash:digest(profile)},tenant:null};
@@ -69,10 +71,10 @@ test("P-7 invalid reserved id refuses before either file is changed",t=>{
   assert.deepEqual(readFileSync(f.store.rosterPath(f.groupId)),roster);assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),state);
 });
 test("C20 roster-first crash persists removal and restart narrows authority",async t=>{
-  const f=fixture(t),roster=f.store.saveRoster.bind(f.store),save=f.store.saveAdapter.bind(f.store);let writes=0;
-  const crash=()=>{if(++writes===1)throw new Error("crash between the two files")};
-  f.store.saveRoster=rec=>{roster(rec);crash()};f.store.saveAdapter=(id,state)=>{save(id,state);crash()};
-  assert.throws(()=>f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"reserved-crash"}),/crash between/);assert.equal(writes,1);
+  const f=fixture(t),roster=f.store.saveRoster.bind(f.store),save=f.store.saveAdapter.bind(f.store);const writes=[];
+  const crash=kind=>{writes.push(kind);if(writes.length===1)throw new Error("crash between the two files")};
+  f.store.saveRoster=rec=>{roster(rec);crash("roster")};f.store.saveAdapter=(id,state)=>{save(id,state);crash("adapter")};
+  assert.throws(()=>f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"reserved-crash"}),/crash between/);assert.deepEqual(writes,["roster","adapter"]); // second write acknowledges the guard's verified recovery scan, not pending removal
   const fresh=new SpaceStore(f.home),head=verifiedHead(fresh.loadRoster(f.groupId));assert.equal(head.members.find(row=>row.uuaid===f.uid(f.member)).status,"removed");
   const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",agents:{}}});t.after(()=>engine.store.close());
   new SpacePolicy({...f.options,store:fresh,engine});
@@ -510,4 +512,110 @@ for(const variant of [
     assert.equal(adapter(f).hardStop?.reason,"outsider");assertClosed(f);assert.equal(f.signals.filter(signal=>signal.code==="SPACE_CLOSED").length,1);
     await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
   }
+});
+
+
+test("S7 T9 ordinary Sub is refused before actual SpacePolicy publication",t=>{
+  const f=fixture(t);class Sub extends RegistryTrust {}
+  f.engine.trust=new Sub({policy:f.policy,client:{}});let reads=0;const load=f.store.loadAdapter.bind(f.store);f.store.loadAdapter=(...args)=>{reads++;return load(...args)};
+  const before=structuredClone(f.policy);assert.throws(()=>new SpacePolicy(f.options),{name:"PolicyIdentityError"});assert.equal(reads,0);assert.deepEqual(f.policy,before);
+});
+for(const failedSave of [false,true])test(`S7 T2 T6 frozen actual trust slot persisted ${!failedSave} denies before signal`,async t=>{
+  const f=fixture(t),trust=f.engine.trust,cached=trust.authorize.bind(trust),copy=Object.freeze(structuredClone(f.policy)),first=new Error("first persistence failure");let observed;
+  assert.equal((await cached(f.uid(f.member),f.key(f.member))).tier,"local-policy-pinned");
+  Object.defineProperty(trust,"policy",{value:copy,writable:false,configurable:true});if(failedSave)f.store.saveAdapter=()=>{throw first};
+  f.writer.onSignal=signal=>{f.signals.push(signal);observed=assert.rejects(cached(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"})};
+  assert.throws(()=>f.writer.check(),e=>failedSave?e===first:e instanceof TypeError);await observed;
+  assert.equal(f.signals.at(-1).persisted,!failedSave);assert.equal(f.signals.at(-1).closed,false);
+  assert.equal(copy.agents[f.uid(f.member)].publicKey,f.key(f.member));assert.equal(adapter(f).hardStop===null,failedSave);
+  await assert.rejects(trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+});
+test("S7 T7 T12 restored public identity cannot reopen a denied old instance or acknowledge history",async t=>{
+  const f=fixture(t),trust=f.engine.trust,healthy=structuredClone(f.policy),copy=Object.freeze(structuredClone(f.policy));
+  Object.defineProperty(trust,"policy",{value:copy,writable:false,configurable:true});assert.throws(()=>f.writer.check(),TypeError);
+  Object.assign(f.policy,healthy);Object.defineProperty(trust,"policy",{value:f.policy,writable:true,configurable:true});f.engine.policy=f.policy;
+  const rec=f.store.loadRoster(f.groupId),state=adapter(f),bytes=readFileSync(f.store.adapterPath(f.groupId)),roster=readFileSync(f.store.rosterPath(f.groupId));let writes=0;
+  const save=f.store.saveAdapter.bind(f.store),saveRoster=f.store.saveRoster.bind(f.store);f.store.saveAdapter=(...args)=>{writes++;return save(...args)};f.store.saveRoster=(...args)=>{writes++;return saveRoster(...args)};
+  for(const action of [()=>f.writer.hardResume(),()=>f.writer.reconsent(consent(f)),()=>f.writer.applyOwnChange("rename",{name:"must not persist"}),()=>f.writer.rebuild(),()=>new SpacePolicy(f.options),()=>writePolicy(f.policy,rec,f.owner,state,verifiedHead(rec).ext.commons,f.allowlist,f.writer._options(f.options.clock()))]){
+    assert.throws(action,{name:"PolicyIdentityError"});assert.equal(writes,0);assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);assert.deepEqual(readFileSync(f.store.rosterPath(f.groupId)),roster);
+  }
+  await assert.rejects(trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",offline:true,agents:{}}});t.after(()=>engine.store.close());const writer=new SpacePolicy({...f.options,engine,store:new SpaceStore(f.home)});writer.hardResume();await engine.trust.authorize(f.uid(f.member),f.key(f.member));
+});
+test("S7 T8 whole roster call recovers a real committed removal after ensureSpaces throws",async t=>{
+  const f=fixture(t),fault=new Error("post-roster ensureSpaces failure"),ensure=f.store._ensureSpaces.bind(f.store);
+  f.store._ensureSpaces=()=>{f.store._ensureSpaces=ensure;throw fault};
+  assert.throws(()=>f.writer.applyOwnChange("remove",{target:f.uid(f.member)},{outboxId:"post-roster-fixture"}),e=>e===fault);
+  const head=verifiedHead(f.store.loadRoster(f.groupId));assert.equal(head.members.find(row=>row.uuaid===f.uid(f.member)).status,"removed");assert.deepEqual(adapter(f).pendingRemovals,[]);
+  await assert.rejects(f.engine.trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});assert.equal(f.policy.agents[f.uid(f.member)],undefined);
+});
+test("S7 T10 fresh durable-stop recovery refuses a blind cursor acknowledgement",async t=>{
+  const f=fixture(t);delete f.policy.agents[f.uid(f.member)];f.writer.check();assert.notEqual(adapter(f).hardStop,null);
+  const engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",offline:true,agents:{}}});t.after(()=>engine.store.close());const writer=new SpacePolicy({...f.options,engine,store:new SpaceStore(f.home)});
+  await assert.rejects(engine.trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  signAndApplyNext(f.store,f.groupId,f.owner,"rename",{name:"unacknowledged safe head"});const bytes=readFileSync(f.store.adapterPath(f.groupId));
+  assert.throws(()=>writer.hardResume(),{name:"OutsiderScanBehindError"});assert.deepEqual(readFileSync(f.store.adapterPath(f.groupId)),bytes);
+  writer.rebuild();assert.notEqual(adapter(f).hardStop,null);writer.hardResume();await engine.trust.authorize(f.uid(f.member),f.key(f.member));
+});
+for(const variant of ["A-clean","B-unacknowledged-history","C-current-head"])test(`S7 T11 fresh failed-save recovery ${variant}`,async t=>{
+  const f=fixture(t),trust=f.engine.trust,copy=Object.freeze(structuredClone(f.policy)),failure=new Error("failed durable stop");
+  Object.defineProperty(trust,"policy",{value:copy,writable:false,configurable:true});f.store.saveAdapter=()=>{throw failure};
+  if(variant!=="A-clean")signAndApplyNext(f.store,f.groupId,f.owner,"invite",{member:{uuaid:f.uid(f.outsider),key:f.key(f.outsider)}});
+  assert.throws(()=>variant==="A-clean"?f.writer.check():f.writer.rebuild(),e=>e===failure);assert.equal(adapter(f).hardStop,null);
+  await assert.rejects(trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  if(variant==="B-unacknowledged-history")signAndApplyNext(f.store,f.groupId,f.owner,"remove",{target:f.uid(f.outsider)});
+  const fresh=new SpaceStore(f.home),engine=new AgentCommons({keychain:f.owner,policy:{mode:"local",offline:true,agents:{}}});t.after(()=>engine.store.close());new SpacePolicy({...f.options,engine,store:fresh});
+  if(variant==="A-clean"){assert.equal(fresh.loadAdapter(f.groupId).state.hardStop,null);await engine.trust.authorize(f.uid(f.member),f.key(f.member))}
+  else{await assert.rejects(engine.trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});assert.equal(fresh.loadAdapter(f.groupId).state.hardStop.reason,"outsider")}
+});
+
+
+for(const variant of [
+  {title:"S7 P1 healthy local denial on an unclosable trust policy",mode:"local"},
+  {title:"S7 P1 healthy global denial on an unclosable trust policy",mode:"global"},
+  {title:"S7 P7 own no-op call cannot bypass same-receiver denial and quarantine",tamper:"noop"},
+  {title:"S7 P3 throwing own call cannot bypass denial",tamper:"throwing"},
+  {title:"S7 P3 getter own call is never invoked by denial",tamper:"getter"},
+  {title:"S7 P5 post-load Reflect.apply replacement cannot bypass denial",tamper:"reflect"},
+])test(variant.title,async t=>{
+  const f=fixture(t),trust=f.engine.trust,cached=trust.authorize.bind(trust),healthy=structuredClone(f.policy);
+  assert.equal((await cached(f.uid(f.member),f.key(f.member))).tier,"local-policy-pinned");
+  const copy=Object.freeze({...structuredClone(f.policy),mode:variant.mode??"local"});
+  Object.defineProperty(trust,"policy",{value:copy,writable:false,configurable:true});
+  const deny=RegistryTrust.prototype.denyPermanently,call=Object.getOwnPropertyDescriptor(deny,"call"),apply=Reflect.apply;let hits=0,closeError;
+  try{
+    if(variant.tamper==="getter")Object.defineProperty(deny,"call",{configurable:true,get(){hits++;throw new Error("call getter invoked")}});
+    if(variant.tamper==="throwing")Object.defineProperty(deny,"call",{configurable:true,value(){hits++;throw new Error("call invoked")}});
+    if(variant.tamper==="noop")Object.defineProperty(deny,"call",{configurable:true,value(){hits++}});
+    if(variant.tamper==="reflect")Reflect.apply=()=>{hits++};
+    try{f.writer.check()}catch(error){closeError=error}
+  }finally{
+    if(call)Object.defineProperty(deny,"call",call);else delete deny.call;
+    Reflect.apply=apply;
+  }
+  assert.ok(closeError instanceof TypeError);assert.equal(hits,0);
+  assert.equal(copy.agents[f.uid(f.member)].publicKey,f.key(f.member));
+  await assert.rejects(cached(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  await assert.rejects(trust.authorize(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  Object.assign(f.policy,healthy);Object.defineProperty(trust,"policy",{value:f.policy,writable:true,configurable:true});f.engine.policy=f.policy;
+  assert.throws(()=>new SpacePolicy(f.options),{name:"PolicyIdentityError"});
+});
+
+test("S7 P4 Function.prototype.call replacement is confined to an isolated child",async t=>{
+  if(process.env.S7_P4_CHILD!=="1"){
+    const env={...process.env,S7_P4_CHILD:"1"};delete env.NODE_TEST_CONTEXT;
+    const result=spawnSync(process.execPath,["--test","--test-reporter=tap","--test-name-pattern=^S7 P4 Function.prototype.call replacement",new URL(import.meta.url).pathname],{encoding:"utf8",env,timeout:15000});
+    assert.ifError(result.error);assert.equal(result.signal,null);assert.equal(result.stdout.includes("S7-P4-CHILD-BODY-EXECUTED"),true,"P4 child body did not execute");assert.equal(result.status,0,"P4 child failed; exit="+result.status);return;
+  }
+  console.log("S7-P4-CHILD-BODY-EXECUTED");
+  const f=fixture(t),trust=f.engine.trust,cached=trust.authorize.bind(trust),healthy=structuredClone(f.policy),copy=Object.freeze(structuredClone(f.policy));
+  assert.equal((await cached(f.uid(f.member),f.key(f.member))).tier,"local-policy-pinned");
+  Object.defineProperty(trust,"policy",{value:copy,writable:false,configurable:true});
+  const call=Function.prototype.call;let closeError;
+  try{Function.prototype.call=function(){return undefined};try{f.writer.check()}catch(error){closeError=error}}
+  finally{Function.prototype.call=call}
+  assert.ok(closeError instanceof TypeError);
+  await assert.rejects(cached(f.uid(f.member),f.key(f.member)),{code:"NOT_ADMITTED"});
+  Object.assign(f.policy,healthy);Object.defineProperty(trust,"policy",{value:f.policy,writable:true,configurable:true});f.engine.policy=f.policy;
+  assert.throws(()=>new SpacePolicy(f.options),{name:"PolicyIdentityError"});
 });

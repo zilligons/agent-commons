@@ -3,15 +3,21 @@ import { isDeepStrictEqual } from "node:util";
 import { keyBindsUuaid, manifestHash } from "./pillar-group.mjs";
 import { agentRecordForRow, agentRecordsFromVerifiedHead, verifiedHead, selfCheck, signAndApplyNext } from "./manifest.mjs";
 import { prunePendingRemovals, validateAdapterState } from "./store.mjs";
+import { RegistryTrust } from "../trust.mjs";
 
 const POLICY_FIELDS=["mode","channelsEnabled","holdBeforeAdmission","agents","tenantProfiles","channels"];
 const emergencyEngines=new WeakSet(); // replacement invalidates the cached shared identity until a fresh engine is constructed
+const quarantinedEngines=new WeakSet();
+const isCanonicalTrust=RegistryTrust.isCanonicalTrust;
+const denyTrust=RegistryTrust.prototype.denyPermanently;
+const reflectApply=Reflect.apply;
 function plainPolicy(value){return value!==null&&typeof value==="object"&&[Object.prototype,null].includes(Object.getPrototypeOf(value))}
 function latched(state){return state.hardStop!==null}
 export class PolicyError extends Error {
   constructor(name,message){super(message);this.name=name}
 }
 export function assertPolicyIdentity(engine){
+  if(quarantinedEngines.has(engine)||!isCanonicalTrust(engine?.trust))throw new PolicyError("PolicyIdentityError","A fresh canonical RegistryTrust receiver is required");
   const policy=engine?.policy,prototype=policy&&Object.getPrototypeOf(policy);
   if(policy===null||typeof policy!=="object"||(prototype!==Object.prototype&&prototype!==null)||Object.isFrozen(policy)||!Object.isExtensible(policy)||policy!==engine?.trust?.policy){
     throw new PolicyError("PolicyIdentityError","Engine and trust must share one mutable plain policy object");
@@ -51,6 +57,11 @@ function closePolicies(policy,groupId,engine){
   }
   let allClosed=false;
   try{allClosed=(engine?[engine.policy,engine.trust?.policy]:[policy]).every(value=>plainPolicy(value)&&POLICY_FIELDS.every(field=>isDeepStrictEqual(value[field],closed(groupId)[field])))}catch(error){failure??=error}
+  if(!allClosed&&engine){
+    if(!isCanonicalTrust(engine.trust))throw new PolicyError("PolicyIdentityError","Cannot deny an unsupported trust receiver");
+    reflectApply(denyTrust,engine.trust,[]);
+    quarantinedEngines.add(engine);
+  }
   return {closed:allClosed,error:failure??(allClosed?null:new PolicyError("PolicyCloseError","An authority consumer remains open"))};
 }
 function requireSharedPolicy(policy,engine){
@@ -86,6 +97,8 @@ function stop(policy,state,reason,{engine,store,onSignal=()=>{},now=Date.now()}=
 export function checkPolicy(policy,rec,self,state,ext,allowlist,options){
   // rec, ext and allowlist remain for caller compatibility; the check reads the persisted inputs again.
   const {engine,store,now=Date.now()}=options;
+  if(!isCanonicalTrust(engine?.trust))throw new PolicyError("PolicyIdentityError","A canonical RegistryTrust receiver is required");
+  if(quarantinedEngines.has(engine))requireSharedPolicy(policy,engine);
   const loaded=store.loadAdapter(state.groupId,{now});
   const saved=store.loadRoster(state.groupId),savedState=loaded?.state;
   if(!savedState)throw new PolicyError("AdapterAbsentError","No persisted adapter state for policy check");
@@ -97,6 +110,8 @@ export function checkPolicy(policy,rec,self,state,ext,allowlist,options){
 /** One run-to-completion write. The options supply the actual engine, store and operator signal. */
 export function writePolicy(policy,rec,self,state,ext,allowlist,options){
   try{
+  if(!isCanonicalTrust(options.engine?.trust))throw new PolicyError("PolicyIdentityError","A canonical RegistryTrust receiver is required");
+  if(quarantinedEngines.has(options.engine))requireSharedPolicy(policy,options.engine);
   if(latched(state)){Object.assign(policy,closed(state.groupId));checkPolicy(policy,rec,self,state,ext,allowlist,options);return policy}
   if(emergencyEngines.has(options.engine))requireSharedPolicy(policy,options.engine);
   if(outsider(rec,state,allowlist)){stop(policy,state,"outsider",options);checkPolicy(policy,rec,self,state,ext,allowlist,options);return policy}
@@ -128,6 +143,8 @@ export class SpacePolicy {
   _options(now){return {engine:this.engine,store:this.store,onSignal:this.onSignal,now}}
   rebuild(){
     try{
+    if(!isCanonicalTrust(this.engine.trust))throw new PolicyError("PolicyIdentityError","A canonical RegistryTrust receiver is required");
+    if(quarantinedEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     const {rec,state,now}=this._load();
     if(latched(state))writePolicy(this.policy,rec,this.self,state,null,this.allowlist,this._options(now));
     if(!rec){if(latched(state))return this.policy;throw new PolicyError("RosterAbsentError","No verified roster for policy rebuild")}
@@ -182,7 +199,7 @@ export class SpacePolicy {
     return this.rebuild();
   }
   reconsent(consent){
-    if(emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
+    if(!isCanonicalTrust(this.engine.trust)||emergencyEngines.has(this.engine)||quarantinedEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     const {rec,state}=this._load(),head=verifiedHead(rec);
     state.consent=structuredClone(consent);state.profile=structuredClone(head.ext.commons.profile);state.softStop=null;
     validateAdapterState(state,this.groupId);
@@ -192,7 +209,7 @@ export class SpacePolicy {
   }
   /** P-7: reserved envelope id is mandatory for a remove/leave; roster FIRST, adapter SECOND. */
   applyOwnChange(action,buildOpts={}, {outboxId}={}){
-    if(emergencyEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
+    if(!isCanonicalTrust(this.engine.trust)||emergencyEngines.has(this.engine)||quarantinedEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);
     const {rec,state,now}=this._load(),head=verifiedHead(rec);
     let nextState=state;
     if(action==="remove"||action==="leave"){
@@ -202,8 +219,9 @@ export class SpacePolicy {
       nextState={...state,pendingRemovals:[...state.pendingRemovals.filter(entry=>entry.uuaid!==row.uuaid),pending]};
       validateAdapterState(nextState,this.groupId); // preflight before either file write
     }
-    const result=signAndApplyNext(this.store,this.groupId,this.self,action,buildOpts);
+    let result;
     try{
+    result=signAndApplyNext(this.store,this.groupId,this.self,action,buildOpts);
     if(nextState!==state)this.store.saveAdapter(this.groupId,nextState);
     }finally{this.rebuild()}
     return result;

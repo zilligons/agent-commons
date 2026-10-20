@@ -26,6 +26,8 @@ export class CommonsStore {
 }
 export class RegistryTrust {
   constructor(options?:{policy?:Policy;client?:any;fetchImpl?:typeof fetch});
+  static isCanonicalTrust(value:unknown):boolean;
+  denyPermanently():void;
   policy:Policy;authorize(id:string,key:string,capability?:string):Promise<any>;standards():Promise<any[]>;
   publishedProfilePin(code:string,hash:string):Promise<any>;
 }

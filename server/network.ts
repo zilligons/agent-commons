@@ -14,6 +14,7 @@ import {
 import type { Profile } from "../packages/agent-commons/src/index.d.ts";
 import { storage } from "./storage";
 import { isOffline, isLoopbackUrl } from "../packages/agent-commons/src/offline.mjs";
+import { SELF_CERTIFYING_NAMESPACES } from "../packages/agent-commons/src/uuaid-namespace.mjs";
 // L3 Slice 2 v6 §2.3: runtime, loopback transport, and memory store integration
 // @ts-ignore
 import { AgentCommons, CommonsStore, MemoryLoopbackTransport } from "../packages/agent-commons/src/index.mjs";
@@ -279,14 +280,19 @@ export class NetworkConsole {
   }
   identity(id: string) {
     const keys = storage.key(id);
+    // Fail closed: a namespace a key alone cannot claim, or none at all, is never
+    // turned into a key-derived id.
+    if (!SELF_CERTIFYING_NAMESPACES.includes(keys.uuaidNamespace))
+      throw new Error(`Console key ${id} has no self-certifying UUAID namespace`);
     const publicKey = createPublicKey(keys.publicKey),
       privateKey = createPrivateKey(keys.privateKey);
     const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
     // Same published Pillar derivation, without claiming registry registration.
+    // The namespace is the one recorded when the key was created, never a default.
     const hex = createHash("sha256").update(raw).digest("hex").slice(0, 32);
     const local = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
     return {
-      uuaid: `uuaid:foundation:agent:${local}`,
+      uuaid: `uuaid:${keys.uuaidNamespace}:agent:${local}`,
       publicKeyHex: raw.toString("hex"),
       publicKey,
       privateKey,
@@ -433,12 +439,12 @@ export class NetworkConsole {
     return {
       ...this.state,
       product: "Agent Commons",
-      version: "0.2.0-alpha.2",
+      version: "0.2.0-alpha.3",
       protocol: "agent-commons/1",
       packageName: "@uuaid/agent-commons",
       release: "packed-locally-not-published",
       node: ">=22.13.0",
-      pillarVersion: "2.0.2",
+      pillarVersion: "2.2.0",
       globalAdmission: "closed-until-credentials-and-pins",
       offline: isOffline(process.env),
       iaasoStatus: "implementation-draft-not-certified",
@@ -489,7 +495,7 @@ export class NetworkConsole {
         {
           name: "Pillar",
           purpose: "Encrypted envelopes, carriers, durable inbox/outbox",
-          state: "wire-tested-2.0.2",
+          state: "wire-tested-2.2.0",
         },
         {
           name: "IAASO",
@@ -502,9 +508,9 @@ export class NetworkConsole {
           state: "local-runtime-tested",
         },
       ],
-      installLocal: "npm install -g ./uuaid-agent-commons-0.2.0-alpha.2.tgz",
+      installLocal: "npm install -g ./uuaid-agent-commons-0.2.0-alpha.3.tgz",
       installAfterPublish:
-        "npx --yes @uuaid/agent-commons@0.2.0-alpha.2 init --target zilligon.com",
+        "npx --yes @uuaid/agent-commons@0.2.0-alpha.3 init --target zilligon.com",
     };
   }
 }

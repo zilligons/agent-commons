@@ -5,6 +5,8 @@
  */
 export {
   RosterStore, isGroupIdV2, STORE_V,
-  // slice 6 (manifest verifier wrapper, admin signer, binding helpers):
-  adminChange, adminOf, keyBindsUuaid, manifestHash, uuaidForKey, verifyChain,
+  // slice 6 (manifest verifier wrapper, admin signer), and the vendored
+  // strict-key rule that manifest.mjs's keyBindsRow pairs with AC's rule-1
+  // binding (the engine's own uuaidForKey/keyBindsUuaid are not used here):
+  adminChange, adminOf, isStrictPublicKey, manifestHash, verifyChain,
 } from "../vendor/pillar/groups-v2.mjs";

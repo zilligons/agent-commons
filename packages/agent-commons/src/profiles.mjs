@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { jcs, Keychain } from "./pillar.mjs";
+import { SELF_CERTIFYING_AGENT_UUAID } from "./uuaid-namespace.mjs";
 
 export const BASE_PROTOCOL = "agent-commons/1";
 export function digest(value) { assertJSON(value);return createHash("sha256").update(jcs(value)).digest("hex"); }
@@ -80,7 +81,7 @@ export function signDocument(keychain, kind, payload) {
 export function verifyDocument(document) {
   assertJSON(document);
   const {signature,...body}=document;
-  if(body.v!==BASE_PROTOCOL||!["profile-proposal","profile-vote","profile-contribution","profile-recovery"].includes(body.kind)||!/^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/.test(body.issuer)||!/^[0-9a-f]{64}$/.test(body.publicKey)||!/^[0-9a-f]{128}$/.test(signature))throw new Error("Invalid agent document");
+  if(body.v!==BASE_PROTOCOL||!["profile-proposal","profile-vote","profile-contribution","profile-recovery"].includes(body.kind)||!SELF_CERTIFYING_AGENT_UUAID.test(body.issuer)||!/^[0-9a-f]{64}$/.test(body.publicKey)||!/^[0-9a-f]{128}$/.test(signature))throw new Error("Invalid agent document");
   if(Keychain.localIdFromKey(Buffer.from(body.publicKey,"hex"))!==body.issuer.split(":")[3])throw new Error("Agent key is not bound to UUAID");
   if(!Keychain.verifyDetached(body.publicKey,Buffer.from(jcs(body)),Buffer.from(signature,"hex")))throw new Error("Invalid document signature");
   return body;

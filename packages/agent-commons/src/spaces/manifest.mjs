@@ -5,9 +5,10 @@
  * manifest path uses the vendored canonicalJson, never the engine's jcs (V-1).
  *
  * In scope here (slice 6): V-3 (only whole chains yield a head), V-6's
- * sign → verify → own-store-save → return order, B-1/B-2 (vendored binding,
- * not re-implemented), B-3 (policy-record candidates from the verified head),
- * B-4 (full-uuaid keys enforce the namespace at the engine trust gate), B-6
+ * sign → verify → own-store-save → return order, B-1/B-2 (one binding,
+ * keyBindsRow: AC's parse-based rule-1 check plus the vendored strict-key
+ * rule), B-3 (policy-record candidates from the verified head), B-4 (full-uuaid
+ * keys admit only the roster's exact spelling at the engine trust gate), B-6
  * (self check) and V-7's unit-level ASCII-key guard.
  *
  * R1: the admin change is the VENDORED `adminChange` (V-1, "vendor, don't
@@ -20,9 +21,9 @@
  * B-5's transport-key snapshot (slices 5/8).
  */
 import {
-  adminChange, adminOf, keyBindsUuaid, manifestHash,
-  uuaidForKey, verifyChain,
+  adminChange, adminOf, isStrictPublicKey, manifestHash, verifyChain,
 } from "./pillar-group.mjs";
+import { keyBindsAgentUuaid } from "../uuaid-namespace.mjs";
 
 /** A named error, so a caller (and a pole) can tell refusals apart. */
 export class ManifestError extends Error {
@@ -72,18 +73,28 @@ function keychainIdentity(keychain) {
 }
 
 /**
- * B-6. Passes only when (a) keychain.uuaid === uuaidForKey(own public key)
- * — the vendored derivation, not a re-implementation — AND (b) the VERIFIED
- * head holds a row for that uuaid carrying that same key. Otherwise throws
- * SelfCheckError. On a chain that verified, (b)'s key-mismatch arm is
- * unreachable when (a) held (B-1: the uuaid is a function of the key, and
- * rowChecks binds every row), so it is kept as a guard against a future
- * vendored change and for callers that hand-build a head — same posture as
- * the space store's keep-only-if clauses.
+ * B-1/B-2: does `key` bind `uuaid`? Namespace alignment rule 1 — a key-derived
+ * agent UUAID in foundation, pillar or agentnet whose local id is the key's,
+ * PARSED, never rebuilt and compared (rule 2) — plus the vendored strict-key
+ * rule (no small-order or non-canonical point). One key therefore binds three
+ * spellings; B-4 is what keeps them apart at the gate.
+ */
+export function keyBindsRow(uuaid, key) {
+  return keyBindsAgentUuaid(uuaid, key) && isStrictPublicKey(key);
+}
+
+/**
+ * B-6. Passes only when (a) the keychain's uuaid is bound by its own public key
+ * (keyBindsRow) AND (b) the VERIFIED head holds a row for that uuaid carrying
+ * that same key. Otherwise throws SelfCheckError. On a chain that verified,
+ * (b)'s key-mismatch arm is unreachable when (a) held (B-1: the local id is a
+ * function of the key, and rowChecks binds every row), so it is kept as a
+ * guard against a future vendored change and for callers that hand-build a
+ * head — same posture as the space store's keep-only-if clauses.
  */
 export function selfCheck(keychain, rec) {
   const id = keychainIdentity(keychain);
-  if (id.uuaid !== uuaidForKey(id.publicKeyHex)) {
+  if (!keyBindsRow(id.uuaid, id.publicKeyHex)) {
     throw new ManifestError("SelfCheckError", "keychain uuaid does not derive from its own public key");
   }
   const head = verifiedHead(rec);
@@ -169,8 +180,8 @@ export function signAndApplyNext(store, groupId, keychain, action, buildOpts = {
 
 /**
  * One candidate `policy.agents` entry from one roster row. The binding is
- * the vendored keyBindsUuaid (B-1/B-2: full-string compare plus strict-key
- * rules) — never re-implemented here. A failing row THROWS; it is never
+ * keyBindsRow (B-1/B-2: rule 1 plus the vendored strict-key rule). A failing
+ * row THROWS; it is never
  * skipped silently. Exported so the binding re-check is unit-testable on a
  * hand-built row (on a verified chain rowChecks already binds every row, so
  * the aggregate below re-checks as defense in depth).
@@ -179,7 +190,7 @@ export function agentRecordForRow(row) {
   if (!row || typeof row.uuaid !== "string" || typeof row.key !== "string") {
     throw new ManifestError("KeyBindingError", "row: expected {uuaid, key} strings");
   }
-  if (!keyBindsUuaid(row.uuaid, row.key)) {
+  if (!keyBindsRow(row.uuaid, row.key)) {
     throw new ManifestError("KeyBindingError", `row ${row.uuaid}: key does not bind its uuaid`);
   }
   return { kind: "agent", publicKey: row.key, capabilities: [...AGENT_CAPABILITIES] };
@@ -188,11 +199,12 @@ export function agentRecordForRow(row) {
 /**
  * B-3, pure: candidate `policy.agents` entries ONLY from the verified head's
  * non-removed rows (active ∪ invited, design §5), keyed by the FULL row.uuaid
- * — which is what makes B-4 hold: the engine's own checks look at the local id
- * only, so an `uuaid:other:agent:<id>` sender with a member's key passes
- * KEY_BINDING and is then refused NOT_ADMITTED, because a policy built here
- * holds only `uuaid:foundation:agent:` keys. Writes no policy: slice 7's
- * policy writer is the only writer and consumes this helper.
+ * — which is what makes B-4 hold. One key has a valid spelling in each of
+ * foundation, pillar and agentnet, all passing KEY_BINDING; a sender re-spelling
+ * a member's key in another of them is refused NOT_ADMITTED, because a policy
+ * built here holds only each row's EXACT spelling. A spelling outside the set
+ * never reaches policy: trust.authorize refuses it AGENT_ONLY. Writes no
+ * policy: slice 7's policy writer is the only writer and consumes this helper.
  */
 export function agentRecordsFromVerifiedHead(rec) {
   const head = verifiedHead(rec);
@@ -215,9 +227,10 @@ function isAsciiKey(k) {
  * V-7's guard, unit-tested here; its wiring into send and receive is
  * slices 8/9. Refuses any non-ASCII object key at any depth — commons
  * objects, charter objects and space profile documents including the
- * lexicon — because the engine's vendored jcs sorts by UTF-16LE bytes and
- * disagrees with pillar-client's JCS on such keys (F16), so no
- * engine-vs-client hash may be computed over them (C13). Array indices are
+ * lexicon. Pillar 2.0.2's jcs sorted by UTF-16LE bytes and disagreed with
+ * pillar-client's JCS on such keys (F16); the vendored 2.2.0 jcs sorts by code
+ * unit as RFC 8785 requires, but peers on older code still disagree, so no
+ * engine-vs-client hash may be computed over such keys (C13). Array indices are
  * keys of an array object and are ASCII by construction. Contract: parsed-
  * JSON or freshly built objects; a cyclic input is out of contract.
  */

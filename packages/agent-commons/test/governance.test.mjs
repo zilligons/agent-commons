@@ -249,12 +249,26 @@ test("proposal quorum rejects distinct reviewer keys sharing one controller", as
 
 test("a shared signing key under another valid UUAID realm is not an independent proposal reviewer", async () => {
   const f = fixture({ amendKeys(keys) {
-    keys[1]._identity = { ...keys[0]._identity, uuaid: keys[0]._identity.uuaid.replace(":foundation:", ":other:") };
+    keys[1]._identity = { ...keys[0]._identity, uuaid: keys[0]._identity.uuaid.replace(":foundation:", ":agentnet:") };
   } });
   assert.notEqual(f.ids[0], f.ids[1]); assert.equal(f.publicKeys[0], f.publicKeys[1]);
   await f.seed(0, 1); await f.seed(1, 3);
   const p = f.proposal(); await f.engine.apply(p);
   await assert.rejects(f.engine.apply(f.vote(1, p)), code("REVIEWER_CONFLICT"));
+});
+
+test("a block on one spelling of a key blocks the key under every other spelling", async () => {
+  for (const spelling of ["agentnet", "pillar"]) {
+    const sameKey = keys => {
+      keys[1]._identity = { ...keys[0]._identity, uuaid: keys[0]._identity.uuaid.replace(":foundation:", `:${spelling}:`) };
+    };
+    const open = fixture({ amendKeys: sameKey });
+    await open.contribution(1);
+    const blocked = fixture({ amendKeys: sameKey, amendPolicy(policy, ids) { policy.agents[ids[0]].blocked = true; } });
+    assert.equal(blocked.policy.agents[blocked.ids[1]].blocked, undefined, "the second spelling's own binding is not blocked");
+    await assert.rejects(blocked.contribution(1), code("NOT_ADMITTED"), `${spelling} spelling of a blocked key was admitted`);
+    await blocked.contribution(2);
+  }
 });
 
 test("seven bootstrap keys controlled by local-operator cannot bootstrap independent credibility", async () => {

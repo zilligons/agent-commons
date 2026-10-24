@@ -68,8 +68,13 @@ export class CommonsCarrier {
         await this.trust.authorize(uuaid,pub,"commons:message");
         const wait=Number(url.searchParams.get("wait")??0);
         if(!Number.isFinite(wait)||wait<0)return this.json(res,400,{error:"invalid-wait"});
-        if(!this.store.inbox(uuaid,since).length&&wait>0)await this.waitFor(uuaid,Math.min(wait,25)*1000,res);
-        if(res.destroyed)return;
+        if(!this.store.inbox(uuaid,since).length&&wait>0){
+          await this.waitFor(uuaid,Math.min(wait,25)*1000,res);
+          if(res.destroyed)return;
+          // A long poll may outlive its admission: re-check before handing over mail, so a key
+          // blocked (under any spelling) or removed during the wait gets the fresh-request refusal.
+          await this.trust.authorize(uuaid,pub,"commons:message");
+        }
         return this.json(res,200,{envelopes:this.store.inbox(uuaid,since),now:Date.now()});
       }
       return this.json(res,404,{error:"not-found"});

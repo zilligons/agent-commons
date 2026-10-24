@@ -31,6 +31,7 @@ import { digest, assertJSON } from "./profiles.mjs";
 // therefore usable on Node 20 with an injected store; Node 22 remains the tested target.
 import { Keychain } from "./vendor/pillar/identity/keychain.mjs";
 import { jcs } from "./vendor/pillar/identity/jcs.mjs";
+import { SELF_CERTIFYING_AGENT_UUAID } from "./uuaid-namespace.mjs";
 
 /** Wire/storage protocol identifier for continuity snapshots. */
 export const CONTINUITY_PROTOCOL = "agent-commons/continuity/1";
@@ -38,7 +39,8 @@ export const CONTINUITY_PROTOCOL = "agent-commons/continuity/1";
 /**
  * Provenance sources recognized by the ledger.
  * - `self`: produced by this agent's own reasoning or tooling.
- * - `peer`: received from another verified agent (actor must be that agent's UUAID).
+ * - `peer`: received from another agent; `actor` names that agent's UUAID as the owner
+ *   states it. The owner signs the label; it is not bound to the peer's key.
  * - `operator`: supplied by the deploying operator/policy.
  * - `tool`: output of a deterministic local tool, benchmark, or fixture.
  * @type {ReadonlyArray<ProvenanceSource>}
@@ -56,7 +58,10 @@ export const DEFAULT_LIMITS = Object.freeze({
   retentionMs: 90 * 86400000,
 });
 
-const UUAID_RE = /^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/;
+// A provenance actor is a label the owner signs over, not an identity accepted
+// on its key, so any agent UUAID shape is allowed here, registry namespaces
+// included. The owner itself must be key-derived (SELF_CERTIFYING_AGENT_UUAID).
+const ACTOR_UUAID_RE = /^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/;
 const KIND_RE = /^[a-z][a-z0-9:_-]{0,63}$/;
 const SLOT_SEGMENT_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const VAULT_KEY_RE = /^uvk_[A-Za-z0-9_-]{16,}$/;
@@ -98,7 +103,9 @@ export class MemoryContinuityStore {
 /**
  * @typedef {object} Provenance
  * @property {ProvenanceSource} source  Where the memory came from.
- * @property {string} actor             UUAID of the agent that produced it (defaults to the owner).
+ * @property {string} actor             UUAID of the agent that produced it, as the owner states it
+ *                                      (defaults to the owner). Signed by the owner, never bound to
+ *                                      the actor's key: do not treat it as authenticated.
  * @property {string|null} origin       Free-form, non-secret locator: session id, document digest, tool name.
  * @property {string|null} evidence     Optional sha256 hex digest of supporting material kept elsewhere.
  */
@@ -220,7 +227,7 @@ export function verifyContinuity(state, owner, envelope = {}) {
   assertJSON(state);
   if (state.v !== CONTINUITY_PROTOCOL) throw new ContinuityError("INTEGRITY", "Unknown continuity protocol", { v: state.v });
   if (state.uuaid !== owner.uuaid || state.publicKey !== owner.publicKey) throw new ContinuityError("IDENTITY_MISMATCH", "Continuity state belongs to a different identity or key", { expected: owner.uuaid, found: state.uuaid });
-  if (Keychain.localIdFromKey(Buffer.from(owner.publicKey, "hex")) !== owner.uuaid.split(":")[3]) throw new ContinuityError("IDENTITY_MISMATCH", "Owner key is not bound to owner UUAID");
+  if (!SELF_CERTIFYING_AGENT_UUAID.test(owner.uuaid ?? "") || Keychain.localIdFromKey(Buffer.from(owner.publicKey, "hex")) !== owner.uuaid.split(":")[3]) throw new ContinuityError("IDENTITY_MISMATCH", "Owner key is not bound to owner UUAID");
   const { anchor, entries } = state;
   if (!anchor || typeof anchor.previous !== "string" || !Number.isSafeInteger(anchor.pruned) || anchor.pruned < 0 || !Array.isArray(entries)) throw new ContinuityError("INTEGRITY", "Malformed anchor or entries");
   if (!Number.isSafeInteger(state.nextSeq) || state.nextSeq < anchor.pruned + entries.length) throw new ContinuityError("INTEGRITY", "Sequence counter is inconsistent with ledger length");
@@ -231,7 +238,7 @@ export function verifyContinuity(state, owner, envelope = {}) {
     if (body.v !== CONTINUITY_PROTOCOL || body.previous !== previous || !Number.isSafeInteger(body.seq) || body.seq <= lastSeq) throw new ContinuityError("INTEGRITY", "Continuity chain link is broken", { seq: body.seq });
     if (digest(body) !== hash) throw new ContinuityError("INTEGRITY", "Continuity entry hash mismatch", { seq: body.seq });
     if (!/^[0-9a-f]{128}$/.test(signature ?? "") || !Keychain.verifyDetached(owner.publicKey, Buffer.from(hash, "hex"), Buffer.from(signature, "hex"))) throw new ContinuityError("INTEGRITY", "Continuity entry signature invalid", { seq: body.seq });
-    if (!PROVENANCE_SOURCES.includes(body.provenance?.source) || !UUAID_RE.test(body.provenance?.actor ?? "")) throw new ContinuityError("INTEGRITY", "Continuity entry provenance invalid", { seq: body.seq });
+    if (!PROVENANCE_SOURCES.includes(body.provenance?.source) || !ACTOR_UUAID_RE.test(body.provenance?.actor ?? "")) throw new ContinuityError("INTEGRITY", "Continuity entry provenance invalid", { seq: body.seq });
     previous = hash;
     lastSeq = body.seq;
   }
@@ -291,7 +298,7 @@ export class ContinuityMemory {
    */
   constructor({ keychain, store = new MemoryContinuityStore(), client = null, vaultKey = null, slot = "continuity/chain", limits = {}, now = () => Date.now() } = {}) {
     const identity = keychain?._identity;
-    if (!identity || !UUAID_RE.test(identity.uuaid ?? "") || !/^[0-9a-f]{64}$/.test(identity.publicKeyHex ?? "") || typeof keychain.sign !== "function") throw new ContinuityError("IDENTITY_REQUIRED", "A loaded Keychain with a bound agent UUAID is required");
+    if (!identity || !SELF_CERTIFYING_AGENT_UUAID.test(identity.uuaid ?? "") || !/^[0-9a-f]{64}$/.test(identity.publicKeyHex ?? "") || typeof keychain.sign !== "function") throw new ContinuityError("IDENTITY_REQUIRED", "A loaded Keychain with a bound agent UUAID is required");
     if (Keychain.localIdFromKey(Buffer.from(identity.publicKeyHex, "hex")) !== identity.uuaid.split(":")[3]) throw new ContinuityError("IDENTITY_REQUIRED", "Keychain public key is not bound to its UUAID");
     if (client !== null && (typeof client !== "object" || typeof client.saveMemory !== "function" || typeof client.loadMemory !== "function")) throw new ContinuityError("CLIENT_INVALID", "Injected client must expose the official saveMemory/loadMemory surface");
     if (vaultKey !== null && !VAULT_KEY_RE.test(vaultKey)) throw new ContinuityError("VAULT_KEY_INVALID", "Vault key must be a uvk_ key from @uuaid/sdk generateVaultKey()");
@@ -427,7 +434,7 @@ export class ContinuityMemory {
     const source = provenance.source ?? "self";
     const actor = provenance.actor ?? this.uuaid;
     if (!PROVENANCE_SOURCES.includes(source)) throw new ContinuityError("ENTRY_INVALID", "Unknown provenance source", { source });
-    if (!UUAID_RE.test(actor)) throw new ContinuityError("ENTRY_INVALID", "Provenance actor must be an agent UUAID");
+    if (!ACTOR_UUAID_RE.test(actor)) throw new ContinuityError("ENTRY_INVALID", "Provenance actor must be an agent UUAID");
     if (source === "self" && actor !== this.uuaid) throw new ContinuityError("ENTRY_INVALID", "Self-provenance must name the owner as actor");
     if (source === "peer" && actor === this.uuaid) throw new ContinuityError("ENTRY_INVALID", "Peer-provenance cannot name the owner as actor");
     if (provenance.evidence != null && !/^[0-9a-f]{64}$/.test(provenance.evidence)) throw new ContinuityError("ENTRY_INVALID", "Evidence must be a sha256 hex digest");

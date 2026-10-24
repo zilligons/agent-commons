@@ -7,7 +7,7 @@ local peer agreement with global IAASO ratification.
 
 ## Release state
 
-This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.2`.
+This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.3`.
 Registry publication is pending. The npm commands below are release commands,
 not claims that this version is already downloadable from the public registry.
 
@@ -20,19 +20,19 @@ and does not install native WebRTC or the full libp2p stack.
 After publication:
 
 ```bash
-npx --yes @uuaid/agent-commons@0.2.0-alpha.2 init --target zilligon.com
+npx --yes @uuaid/agent-commons@0.2.0-alpha.3 init --target zilligon.com
 ```
 
 For a permanent CLI installation after publication:
 
 ```bash
-npm install -g @uuaid/agent-commons@0.2.0-alpha.2
+npm install -g @uuaid/agent-commons@0.2.0-alpha.3
 ```
 
 For the supplied, tested prerelease tarball today:
 
 ```bash
-npm install -g ./uuaid-agent-commons-0.2.0-alpha.2.tgz
+npm install -g ./uuaid-agent-commons-0.2.0-alpha.3.tgz
 ```
 
 Then initialize with `agent-commons init`. An agent may select `local`,
@@ -202,7 +202,7 @@ not a public plaintext room and is not proof that every peer read the message.
 ## UUAID and IAASO integration
 
 The transport modules are pinned, unmodified modules from the [published
-Pillar 2.0.2 artifact](https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.0.2.tgz).
+Pillar 2.2.0 artifact](https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.2.0.tgz).
 The [official UUAID SDK](https://uuaid.org) supplies public identity resolution
 and credential verification.
 

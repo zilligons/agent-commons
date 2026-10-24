@@ -27,7 +27,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { localIdFromKey, isStrictEd25519PublicKey } from "./identity/keychain.mjs";
+import { keyDerivedUuaidFor, keyDerivesUuaid, isStrictEd25519PublicKey } from "./identity/keychain.mjs";
 import { findGroup } from "./groups.mjs";
 
 export const MANIFEST_V = "pillar-group-manifest/2";
@@ -133,10 +133,10 @@ export function verifyEd25519Strict(publicKeyHex, message, signatureHex) {
   } catch { return false; }
 }
 
-/** The Pillar keychain rule, exactly: uuaid:foundation:agent:<sha256(pubkey) as a UUID>. */
-export function uuaidForKey(publicKeyHex) { return `uuaid:foundation:agent:${localIdFromKey(Buffer.from(publicKeyHex, "hex"))}`; }
+/** Key-derived agent identity in a self-certifying namespace; foundation remains the default. */
+export function uuaidForKey(publicKeyHex, namespace = "foundation") { return keyDerivedUuaidFor(publicKeyHex, { namespace }); }
 export function keyBindsUuaid(uuaid, publicKeyHex) {
-  return isStrictPublicKey(publicKeyHex) && uuaid === uuaidForKey(publicKeyHex);
+  return isStrictPublicKey(publicKeyHex) && keyDerivesUuaid(publicKeyHex, uuaid, "agent");
 }
 
 // ───────────────────────────────────────────── manifest checks ──
@@ -199,7 +199,7 @@ export function verifyGenesis(m) {
   if (rows) return no(rows);
   const admin = adminOf(m);
   if (m.sig.publicKey !== admin.key) return no("signer-not-admin");
-  if (m.sig.keyId !== uuaidForKey(m.sig.publicKey)) return no("keyid-mismatch");
+  if (m.sig.keyId !== admin.uuaid || !keyBindsUuaid(m.sig.keyId, m.sig.publicKey)) return no("keyid-mismatch");
   if (!verifyEd25519Strict(admin.key, signingPreimage(m), m.sig.signature)) return no("bad-signature"); // @rule M1-signature-genesis
   if (m.members.some((r) => r !== admin && !(r.role === "member" && r.status === "invited"))) return no("no-matching-transition");
   if (m.epoch !== 0) return no("epoch-mismatch");
@@ -262,7 +262,7 @@ export function verifyNext(prev, m) {
   if (m.prev !== manifestHash(prev)) return no("prev-mismatch"); // @rule M1-prev
   const pAdmin = adminOf(prev);
   if (m.sig.publicKey !== pAdmin.key) return no("signer-not-admin"); // @rule M1-signer-from-chain
-  if (m.sig.keyId !== uuaidForKey(m.sig.publicKey)) return no("keyid-mismatch"); // @rule M1-keyid
+  if (m.sig.keyId !== pAdmin.uuaid || !keyBindsUuaid(m.sig.keyId, m.sig.publicKey)) return no("keyid-mismatch"); // @rule M1-keyid
   if (!verifyEd25519Strict(pAdmin.key, signingPreimage(m), m.sig.signature)) return no("bad-signature"); // @rule M1-signature
   const rows = rowChecks(m);
   if (rows) return no(rows);
@@ -364,7 +364,7 @@ export function signManifest(m, signer) {
   if (!id?.privateKey || !id?.publicKeyHex) throw new Error("signManifest: need a loaded keychain or identity");
   const body = without(m, "sig");
   const signature = edSign(null, Buffer.from(canonicalJson(body), "utf-8"), id.privateKey).toString("hex");
-  return { ...body, sig: { alg: "ed25519", keyId: uuaidForKey(id.publicKeyHex), publicKey: id.publicKeyHex, signature } };
+  return { ...body, sig: { alg: "ed25519", keyId: id.uuaid ?? uuaidForKey(id.publicKeyHex), publicKey: id.publicKeyHex, signature } };
 }
 
 // ───────────────────────────────────────────── store (pillar-group-store/2) ──

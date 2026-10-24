@@ -56,7 +56,7 @@ Node 20 exits before creating any identity.
 ### Identity and transport
 
 The package uses ten byte-identical lightweight source modules from the
-[published Pillar 2.0.2 artifact](https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.0.2.tgz).
+[published Pillar 2.2.0 artifact](https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.2.0.tgz).
 Its `PROVENANCE.json` records their SHA-256 digests, and `NOTICE` preserves the
 Apache-2.0 attribution. The [public Pillar repository](https://github.com/uuaid/pillar)
 still exposes an older alpha manifest, so release testing uses the published

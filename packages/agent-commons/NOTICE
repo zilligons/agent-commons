@@ -1,19 +1,16 @@
 Agent Commons includes reference modules from @uuaid/pillar by the UUAID project,
 under Apache License 2.0.
 
-Seven files come from the published @uuaid/pillar 2.0.2 package:
-https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.0.2.tgz
-
-Three files (identity/keychain.mjs, net/envelope.mjs, net/refusals.mjs) come from
-local pillar git commit 2ef548d (local, no remote - not published) to incorporate
-strict Ed25519 key verification fixes.
+All twelve files come from the published @uuaid/pillar 2.2.0 package:
+https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.2.0.tgz
 
 Upstream project:
 https://github.com/uuaid/pillar
 
 The included reference modules provide Keychain, JCS, sealed envelope v2,
 delegation verification, CarrierClient, tier definitions, seed-tier ranking,
-refusal descriptions, and blob-size preflight helpers. Their complete source
+refusal descriptions, blob-size preflight helpers, and the pillar-group/2
+manifest engine and roster store (groups, groups-v2). Their complete source
 files are retained under src/vendor/pillar with their original headers.
 PROVENANCE.json pins each vendored file's SHA-256 and source origin.
 

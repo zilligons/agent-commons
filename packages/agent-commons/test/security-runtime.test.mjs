@@ -15,24 +15,36 @@ function setup(n=3){
   return {keys,policy,runtimes,profile};
 }
 // --- Duplicate-key quorum (B3) ---
+// One key now has three valid spellings (foundation, pillar, agentnet), so the
+// policy-level denial is what stops one key voting as several agents.
 test("one key admitted under two UUAID spellings is denied (policy-level Sybil)",async()=>{
+  for(const namespace of ["agentnet","pillar"]){
+    const {keys,policy}=setup(2);const k=keys[0]._identity;
+    const alias=k.uuaid.replace(":foundation:",`:${namespace}:`);
+    policy.agents[alias]={...policy.agents[k.uuaid]};
+    const trust=new RegistryTrust({policy});
+    await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex,"commons:evolve"),/more than one UUAID/);
+    await assert.rejects(trust.authorize(alias,k.publicKeyHex,"commons:evolve"),/more than one UUAID/);
+  }
+});
+test("a key-derived id in a namespace a key cannot claim is refused before policy is consulted",async()=>{
   const {keys,policy}=setup(2);const k=keys[0]._identity;
   const alias=k.uuaid.replace(":foundation:",":spoof:");
   policy.agents[alias]={...policy.agents[k.uuaid]};
-  const trust=new RegistryTrust({policy});
-  await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex,"commons:evolve"),/more than one UUAID/);
-  await assert.rejects(trust.authorize(alias,k.publicKeyHex,"commons:evolve"),/more than one UUAID/);
+  await assert.rejects(new RegistryTrust({policy}).authorize(alias,k.publicKeyHex,"commons:evolve"),e=>e.code==="AGENT_ONLY");
 });
 test("proposer's key cannot approve its own proposal through a second spelling, and one key cannot double-vote",async()=>{
   const {keys,policy,runtimes:[a,b,c],profile}=setup(3);
   const p=await a.propose(profile.id,"semantic equivalence");
   await a.apply(await b.vote(p.payload.proposal.id,true));
   // Forge-free scenario: same key, different issuer string, signed with the real key. Admission is denied at policy level.
-  const alias=keys[1]._identity.uuaid.replace(":foundation:",":spoof:");
+  const alias=keys[1]._identity.uuaid.replace(":foundation:",":agentnet:");
   policy.agents[alias]={...policy.agents[keys[1]._identity.uuaid]};
   const spoof={...keys[1],_identity:{...keys[1]._identity,uuaid:alias},sign:data=>keys[1].sign(data)};
   const doc=signDocument(spoof,"profile-vote",{proposalId:p.payload.proposal.id,approve:true,rationale:"dup"});
   await assert.rejects(a.apply(doc),/more than one UUAID|Ineligible/);
+  const registry={...keys[1],_identity:{...keys[1]._identity,uuaid:keys[1]._identity.uuaid.replace(":foundation:",":spoof:")},sign:data=>keys[1].sign(data)};
+  await assert.rejects(a.apply(signDocument(registry,"profile-vote",{proposalId:p.payload.proposal.id,approve:true,rationale:"dup"})),/Invalid agent document/);
   assert.equal(a.profiles().length,1);
 });
 // --- Reliable cursors / trust outage (H1-H3) ---
@@ -141,10 +153,12 @@ for(const pause of ["standards","resolve","verify"])test(`S7 T4 global final fen
   assert.equal((await healthy.authorize(k.uuaid,k.publicKeyHex)).tier,"registry-credential-and-policy");
 });
 test("S7 global result construction precedes the final fence",async()=>{
+  // credentialId reads: 1-3 the registry checks, 4-5 the post-registry policy re-check,
+  // 6 the result construction. Denying on read 6 proves the final fence still follows it.
   const {keys,policy}=setup(1),k=keys[0]._identity,pins=Object.fromEntries(REQUIRED_STANDARDS.map(code=>[code,"b".repeat(64)]));let reads=0,trust;
-  const binding=policy.agents[k.uuaid];Object.defineProperty(binding,"credentialId",{get(){if(++reads===4)trust.denyPermanently();return "fixture-credential"}});
+  const binding=policy.agents[k.uuaid];Object.defineProperty(binding,"credentialId",{get(){if(++reads===6)trust.denyPermanently();return "fixture-credential"}});
   trust=new RegistryTrust({policy:{...policy,mode:"global",offline:false,standardPins:pins},env:{},client:{resolve:async()=>({uuaid:k.uuaid,status:"active"}),verify:async()=>({credential_id:"fixture-credential",agent_uuaid:k.uuaid,valid:true,signatureValid:true,active:true,notExpired:true})},fetchImpl:async()=>({ok:true,json:async()=>({standards:REQUIRED_STANDARDS.map(code=>({code,stage:"published",content_hash:pins[code]}))})})});
-  await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});assert.equal(reads,4);
+  await assert.rejects(trust.authorize(k.uuaid,k.publicKeyHex),{code:"NOT_ADMITTED"});assert.equal(reads,6);
 });
 test("S7 T9 brand refuses a prototype-shaped impostor without other masking guards",()=>{
   const policy={mode:"local"},impostor=Object.assign(Object.create(RegistryTrust.prototype),{policy});

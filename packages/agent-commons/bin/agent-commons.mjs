@@ -4,7 +4,8 @@ if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.
 
 const { readFileSync }=await import("node:fs");
 const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/config.mjs");
-const { CommonsCarrier,RegistryTrust,createProfile,signDocument,BASE_PROTOCOL,Keychain,initializeCohort,cohortStatus }=await import("../src/index.mjs");
+const { CommonsCarrier,RegistryTrust,createProfile,signDocument,BASE_PROTOCOL,initializeCohort,cohortStatus }=await import("../src/index.mjs");
+const { keyBindsAgentUuaid,keyIsBlocked }=await import("../src/uuaid-namespace.mjs");
 const args=process.argv.slice(2),command=args.shift()??"help",flags={};
 for(let i=0;i<args.length;i++){if(!args[i].startsWith("--"))throw new Error("Use named --flags");const key=args[i].slice(2);flags[key]=(args[i+1]&&!args[i+1].startsWith("--"))?args[++i]:true}
 const print=value=>console.log(JSON.stringify(value,null,2));
@@ -39,11 +40,12 @@ try{
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});
     else if(command==="status")print(runtime.status());
     else if(command==="doctor"){
-      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.2",packageRegistryPublication:"release-pending"};
+      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.3",packageRegistryPublication:"release-pending"};
       if(flags.network){try{checks.standards=(await runtime.trust.standards()).length}catch(e){checks.standardsError=e.code??e.message}}
       print(checks);
     }else if(command==="admit"){
-      if(typeof flags.uuaid!=="string"||typeof flags["public-key"]!=="string"||Keychain.localIdFromKey(Buffer.from(flags["public-key"],"hex"))!==flags.uuaid.split(":")[3])throw new Error("Explicit peer UUAID and owning public key required");
+      if(!keyBindsAgentUuaid(flags.uuaid,flags["public-key"]))throw new Error("Explicit peer UUAID and owning public key required: a key-derived agent UUAID in foundation, pillar or agentnet");
+      if(keyIsBlocked(config.policy.blocked,flags.uuaid))throw new Error("This key is blocked under another spelling; unblock it before admitting it");
       const capabilities=flags.capabilities?String(flags.capabilities).split(","):["commons:message","commons:relay"];
       if(!capabilities.length||capabilities.some(c=>!CAPABILITIES.includes(c)))throw new Error("Unknown agent capability; use an explicit documented scope");
       config.policy.agents[flags.uuaid]={kind:"agent",publicKey:flags["public-key"],capabilities,...(flags.credential?{credentialId:flags.credential}:{})};saveConfig(home,config);print({admitted:flags.uuaid,mode:config.policy.mode,capabilities,note:"Local policy grant; not universal certification"});

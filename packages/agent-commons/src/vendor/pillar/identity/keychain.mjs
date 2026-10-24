@@ -65,6 +65,54 @@ export function localIdFromKey(rawPub) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** Registry namespaces cannot be asserted by possession of a key alone. */
+export const SELF_CERTIFYING_NAMESPACES = Object.freeze(["foundation", "pillar", "agentnet"]);
+
+/**
+ * The namespace `pillar init` mints a NEW agent identity in when no --namespace is given.
+ * Expand before contract (owner order 2026-10-24; Uuaid-Codex review K1): 2.2.0 makes every
+ * verifier accept foundation, pillar and agentnet but still mints `foundation`, because a
+ * `pillar:` identity cannot read its inbox on a pre-2.2.0 carrier. 2.2.1 flips this to
+ * `pillar` once the carrier fleet, the main relay and the blob brokers run 2.2.x/1.2.0.
+ * Existing keychains keep the UUAID they were saved with. `Keychain.generate`'s own default
+ * stays `foundation` for library callers; CLI mint sites pass `mintNamespace(...)` instead.
+ */
+export const NEW_IDENTITY_NAMESPACE = "foundation";
+
+/**
+ * Carrier-infrastructure identities (pillar-seed, pillar-directory, pillar-escrow) stay in
+ * `foundation`: they are spoken to by third-party seeds and DHT peers on any version, and
+ * the owner's rule covers the identities people create, not the fleet's service keys
+ * (Uuaid-Codex review K2).
+ */
+export const SERVICE_IDENTITY_NAMESPACE = "foundation";
+
+/** The namespace to mint in: `requested` if it is self-certifying, else NEW_IDENTITY_NAMESPACE. Throws on any other namespace. */
+export function mintNamespace(requested) {
+  if (requested === undefined || requested === null) return NEW_IDENTITY_NAMESPACE;
+  if (typeof requested !== "string" || !SELF_CERTIFYING_NAMESPACES.includes(requested)) {
+    throw new Error(`namespace must be one of ${SELF_CERTIFYING_NAMESPACES.join(", ")} (a key alone cannot claim ${String(requested)})`);
+  }
+  return requested;
+}
+
+/** Rebuild the complete key-derived identity; minting still defaults to foundation. */
+export function keyDerivedUuaidFor(publicKeyHex, { namespace = "foundation", objectType = "agent" } = {}) {
+  if (!SELF_CERTIFYING_NAMESPACES.includes(namespace)
+    || typeof objectType !== "string" || !/^[a-z0-9-]+$/.test(objectType)
+    || typeof publicKeyHex !== "string" || !/^[0-9a-f]{64}$/i.test(publicKeyHex)) return null;
+  return `uuaid:${namespace}:${objectType}:${localIdFromKey(Buffer.from(publicKeyHex, "hex"))}`;
+}
+
+/** Compare the full identity, optionally constraining a path's existing object type. */
+export function keyDerivesUuaid(publicKeyHex, uuaid, objectType = null) {
+  if (typeof uuaid !== "string") return false;
+  const parts = uuaid.split(":");
+  if (parts.length !== 4 || parts[0] !== "uuaid" || (objectType !== null && parts[2] !== objectType)) return false;
+  const expected = keyDerivedUuaidFor(publicKeyHex, { namespace: parts[1], objectType: parts[2] });
+  return expected !== null && uuaid === expected;
+}
+
 export class Keychain {
   constructor(path) {
     this.path = path;
@@ -78,8 +126,9 @@ export class Keychain {
   /**
    * Generate a fresh identity.  Never overwrites.
    *
-   * uuaidNamespace: default "foundation" per IAASO-1001 today; will support
-   * federated forms once federation profile ratifies.
+   * uuaidNamespace: default "foundation" (the genesis namespace) for library
+   * callers. The Pillar CLIs pass mintNamespace(...) explicitly, so a new CLI
+   * identity is `pillar` unless the operator asks for agentnet or foundation.
    * objectType: default "agent"; overridable to "service" etc.
    * localId: default random UUIDv4-like; caller may supply.
    */

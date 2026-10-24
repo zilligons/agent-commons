@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
+import { mintNamespace, RUNTIME_UUAID_NAMESPACE } from "../packages/agent-commons/src/uuaid-namespace.mjs";
 
 const sqlite = new Database("commons.db");
 // Preserve existing identity/ledger continuity while fixing filesystem exposure.
@@ -18,12 +19,24 @@ sqlite.pragma("journal_mode = WAL");
 sqlite.exec(
   "CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS agent_keys (id TEXT PRIMARY KEY, private_key TEXT NOT NULL, public_key TEXT NOT NULL)",
 );
+// Every key row records the namespace its UUAID is minted in. Rows written
+// before the column existed get "foundation", the namespace they were always
+// read in, so no existing identity is renamed. IMMEDIATE takes the write lock
+// before the check, so two processes opening one database cannot both add it.
+export function ensureAgentKeyNamespace(database: Database.Database) {
+  database.transaction(() => {
+    const columns = database.prepare("PRAGMA table_info(agent_keys)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "uuaid_namespace"))
+      database.exec("ALTER TABLE agent_keys ADD COLUMN uuaid_namespace TEXT NOT NULL DEFAULT 'foundation'");
+  }).immediate();
+}
+ensureAgentKeyNamespace(sqlite);
 protectDatabase();
 export const db = drizzle(sqlite);
 export interface IStorage {
   load(): CommonsState | null;
   save(state: CommonsState): void;
-  key(id: string): { privateKey: string; publicKey: string };
+  key(id: string): { privateKey: string; publicKey: string; uuaidNamespace: string };
   existingPublicKey(id: string): string | null;
   loadNetwork(): any;
   saveNetwork(value: any): void;
@@ -86,7 +99,7 @@ export class DatabaseStorage implements IStorage {
   }
   key(id: string) {
     const row = db.select().from(agentKeys).where(eq(agentKeys.id, id)).get();
-    if (row) return { privateKey: row.privateKey, publicKey: row.publicKey };
+    if (row) return { privateKey: row.privateKey, publicKey: row.publicKey, uuaidNamespace: row.uuaidNamespace };
     const pair = generateKeyPairSync("ed25519");
     const key = {
       privateKey: pair.privateKey
@@ -95,6 +108,8 @@ export class DatabaseStorage implements IStorage {
       publicKey: pair.publicKey
         .export({ type: "spki", format: "pem" })
         .toString(),
+      // A new key is minted in the runtime namespace, recorded with the key.
+      uuaidNamespace: mintNamespace(RUNTIME_UUAID_NAMESPACE),
     };
     db.insert(agentKeys)
       .values({ id, ...key })

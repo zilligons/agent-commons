@@ -20,6 +20,21 @@ function byTier(tiers) {
   return (a, b) => seedTier(tiers[a] ?? "probation").listRank - seedTier(tiers[b] ?? "probation").listRank;
 }
 
+/**
+ * The carrier's signed acceptance receipt (uuaid.carrier-receipt.v1), kept as
+ * the carrier sent it, plus this client's own clock when the answer arrived
+ * (design §12 rule 3: record received-at beside the carrier's acceptedAt,
+ * which is only the carrier's claim). NOT verified here: verify against the
+ * pinned key for this carrier and the exact envelope posted. {} when the
+ * carrier sent no receipt (an older or keyless carrier): that never fails a
+ * delivery, the outcome is simply unreceipted.
+ */
+function keptReceipt(body) {
+  const r = body?.receipt;
+  if (!r || typeof r !== "object" || Array.isArray(r) || typeof body.receiptSig !== "string") return {};
+  return { receipt: r, receiptSig: body.receiptSig, receivedAt: new Date().toISOString() }; // @rule client.keeps-receipt
+}
+
 export class CarrierClient {
   /**
    * @param {{keychain: import('../identity/keychain.mjs').Keychain, carriers: string[]}} opts
@@ -66,8 +81,13 @@ export class CarrierClient {
    * Resolves once every carrier has answered.  Succeeds if at least one
    * accepted; throws if every carrier rejects.  Returns the receipt from the
    * most PROVEN accepting carrier as the primary ({ carrier, seq, sha,
-   * duplicate }) plus `all` with every carrier's outcome ({ carrier, ok,
-   * seq?, sha?, duplicate?, error?, status?, reason?, fix? }).
+   * duplicate, receipt?, receiptSig?, receivedAt? }) plus `all` with every
+   * carrier's outcome ({ carrier, ok, seq?, sha?, duplicate?, receipt?,
+   * receiptSig?, receivedAt?, error?, status?, reason?, fix? }).
+   *
+   * `receipt` / `receiptSig` are present only when that carrier signed one
+   * (uuaid.carrier-receipt.v1); they are unverified carrier output, and
+   * `receivedAt` is this client's clock, not the carrier's.
    *
    * When every carrier refuses, the thrown error carries `code` (the most
    * proven carrier's `reason`, else carrier-unreachable / carrier-bad-response),
@@ -105,7 +125,7 @@ export class CarrierClient {
         let body = {};
         try { body = raw ? JSON.parse(raw) : {}; } catch (_error) {}
         if (res.status === 202 && body.accepted) {
-          return { carrier: base, ok: true, seq: body.seq, sha: body.sha, duplicate: !!body.duplicate };
+          return { carrier: base, ok: true, seq: body.seq, sha: body.sha, duplicate: !!body.duplicate, ...keptReceipt(body) };
         }
         const reason = typeof body.reason === "string" && body.reason ? body.reason
           : typeof body.error === "string" && body.error ? body.error : null;
@@ -132,15 +152,15 @@ export class CarrierClient {
       throw e;
     }
     const ranked = accepted.slice().sort((a, b) => byTier(this.carrierTiers)(a.carrier, b.carrier));
-    const { carrier, seq, sha, duplicate } = ranked[0];
-    return { carrier, seq, sha, duplicate, all };
+    const { carrier, seq, sha, duplicate, receipt, receiptSig, receivedAt } = ranked[0];
+    return { carrier, seq, sha, duplicate, ...(receipt ? { receipt, receiptSig, receivedAt } : {}), all };
   }
 
   /**
    * Fetch envelopes addressed to us with seq > since from a specific carrier.
    * Signed request; carrier verifies our key before serving.
    */
-  async fetchInbox(base, { since = 0, waitS = 0, timeoutMs = 40000 } = {}) {
+  async fetchInbox(base, { since = 0, waitS = 0, timeoutMs = 40000, signal = null } = {}) {
     const path = `GET /v1/inbox/${this.uuaid}?since=${since}`;
     const ts = String(Date.now());
     const sig = this.keychain.sign(Buffer.from(`${path}\n${ts}`, "utf-8")).toString("hex");
@@ -150,7 +170,9 @@ export class CarrierClient {
         "x-pillar-ts": ts,
         "x-pillar-sig": sig,
       },
-      signal: AbortSignal.timeout(timeoutMs),
+      // `signal` lets a caller cancel a long-poll early (peekCarrierInbox stops
+      // the other carriers once one has mail).
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (res.status !== 200) {
       const body = await res.json().catch(() => ({}));

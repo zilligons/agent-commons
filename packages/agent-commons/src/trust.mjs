@@ -1,5 +1,6 @@
 import { UuaidClient } from "@uuaid/sdk";
 import { Keychain } from "./pillar.mjs";
+import { keyIsBlocked, SELF_CERTIFYING_AGENT_UUAID } from "./uuaid-namespace.mjs";
 import { isLoopbackUrl, isOffline } from "./offline.mjs";
 
 export const REQUIRED_STANDARDS=["IAASO-1001","IAASO-2001","IAASO-3101","IAASO-3301"];
@@ -49,15 +50,21 @@ export class RegistryTrust {
     }
     return list;
   }
-  async authorize(uuaid,publicKey,capability="commons:message"){
-    if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
-    if(!/^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/.test(uuaid)||!/^[0-9a-f]{64}$/.test(publicKey))throw new TrustError("AGENT_ONLY","A cryptographically bound agent UUAID is required");
+  // The local half of admission: identity shape, key binding, block list, and the
+  // operator's binding and capability. Synchronous, so it reads the policy as it is now.
+  #localAdmission(uuaid,publicKey,capability){
+    if(!SELF_CERTIFYING_AGENT_UUAID.test(uuaid)||!/^[0-9a-f]{64}$/.test(publicKey))throw new TrustError("AGENT_ONLY","A cryptographically bound agent UUAID in a self-certifying namespace (foundation, pillar, agentnet) is required");
     if(Keychain.localIdFromKey(Buffer.from(publicKey,"hex"))!==uuaid.split(":")[3])throw new TrustError("KEY_BINDING","Agent UUAID is not owned by the presented key");
-    if(this.policy.blocked?.includes(uuaid))throw new TrustError("SUBJECT_BLOCKED","Subject is blocked");
+    if(keyIsBlocked(this.policy.blocked,uuaid))throw new TrustError("SUBJECT_BLOCKED","Subject is blocked (under this or another spelling of its key)");
     const binding=this.policy.agents?.[uuaid];
     // One key must be one voice: reject any policy that admits the same key under several UUAID spellings.
     if(binding&&Object.values(this.policy.agents).filter(a=>a?.publicKey===publicKey).length!==1)throw new TrustError("DUPLICATE_KEY","One public key is admitted under more than one UUAID; Sybil-ambiguous policy is denied");
     if(!binding||binding.publicKey!==publicKey||binding.kind!=="agent"||!binding.capabilities?.includes(capability))throw new TrustError("NOT_ADMITTED","Subject/key/capability has not been admitted by this deployment");
+    return binding;
+  }
+  async authorize(uuaid,publicKey,capability="commons:message"){
+    if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
+    const binding=this.#localAdmission(uuaid,publicKey,capability);
     if(this.policy.mode!=="global"){
       const result={tier:"local-policy-pinned",uuaid,capability,certified:false};
       if(this.#denied)throw new TrustError("NOT_ADMITTED","Trust receiver has been permanently denied");
@@ -71,6 +78,10 @@ export class RegistryTrust {
     if(!binding.credentialId)throw new TrustError("CREDENTIAL_REQUIRED","Global agent admission requires a pinned credential");
     const verdict=await backend(()=>this.client.verify(binding.credentialId),"REGISTRY_UNAVAILABLE");
     if(verdict.credential_id!==binding.credentialId||verdict.agent_uuaid!==uuaid||![verdict.valid,verdict.signatureValid,verdict.active,verdict.notExpired].every(v=>v===true))throw new TrustError("CREDENTIAL_INVALID","Credential signature, subject, active status, or expiry failed");
+    // The registry calls above await, and the operator's policy may change meanwhile
+    // (a block, a removal, a narrowed capability). Decide on the policy as it is now,
+    // for the same credential the registry just verified.
+    if(this.#localAdmission(uuaid,publicKey,capability).credentialId!==binding.credentialId)throw new TrustError("NOT_ADMITTED","Admission changed while the registry was consulted");
     // Capabilities are operator policy grants. A valid credential alone does not
     // imply an IAASO accreditation role or permission to ratify a standard.
     const result={tier:"registry-credential-and-policy",uuaid,capability,credentialId:binding.credentialId,certified:false};

@@ -1,6 +1,6 @@
 // Unmodified upstream modules are covered by NOTICE and PROVENANCE.json.
 // CarrierClient is wrapped here. The vendored module stays byte-identical to
-// @uuaid/pillar 2.0.2. Offline refusal happens before any vendored method runs.
+// @uuaid/pillar 2.2.0. Offline refusal happens before any vendored method runs.
 import { CarrierClient as VendoredCarrierClient } from "./vendor/pillar/net/carrier-client.mjs";
 import { isLoopbackUrl, isOffline } from "./offline.mjs";
 
@@ -26,7 +26,7 @@ function offlineError(url) {
 export class CarrierClient extends VendoredCarrierClient {
   constructor(options = {}) {
     super(options);
-    // Upstream pillar 2.0.2 does not store env. The package seam does.
+    // Upstream pillar 2.2.0 does not store env. The package seam does.
     this._offlineEnv = options.env ?? process.env;
   }
 

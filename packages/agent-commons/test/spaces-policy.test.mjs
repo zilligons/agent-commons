@@ -8,12 +8,12 @@ import { spawnSync } from "node:child_process";
 import { AgentCommons, Keychain, createProfile, digest, signDocument, proposeAlias, seal, RegistryTrust } from "../src/index.mjs";
 import { buildGenesis, buildNext, signManifest, newRecord } from "../src/vendor/pillar/groups-v2.mjs";
 import { SpaceStore, ADAPTER_V, PENDING_TTL_MS } from "../src/spaces/store.mjs";
-import { signAndApplyNext, verifiedHead } from "../src/spaces/manifest.mjs";
+import { selfCheck, signAndApplyNext, verifiedHead } from "../src/spaces/manifest.mjs";
 import { SpacePolicy, assertPolicyIdentity, writePolicy } from "../src/spaces/policy.mjs";
 import { manifestHash } from "../src/spaces/pillar-group.mjs";
 
-function fixture(t){
-  const home=mkdtempSync(join(tmpdir(),"spaces-policy-")),store=new SpaceStore(home),keys=Array.from({length:4},()=>{const k=new Keychain("unused");k._identity=Keychain.generate();return k});
+function fixture(t,namespaces=["foundation","foundation","foundation","foundation"]){
+  const home=mkdtempSync(join(tmpdir(),"spaces-policy-")),store=new SpaceStore(home),keys=namespaces.map(uuaidNamespace=>{const k=new Keychain("unused");k._identity=Keychain.generate({uuaidNamespace});return k});
   const [owner,member,invited,outsider]=keys,uid=k=>k._identity.uuaid,key=k=>k._identity.publicKeyHex;
   const profile=createProfile({namespace:"local/space-policy",name:"Policy fixture",scope:"local",lexicon:{},fixtures:["Repeated protocol phrase Repeated protocol phrase", "Repeated protocol phrase Repeated protocol phrase"]});
   const commons={v:"commons/1",profile:{id:profile.id,hash:digest(profile)},tenant:null};
@@ -47,6 +47,31 @@ test("P-2 vectors 23/36: every roster record has only message authority at the r
   const envelope=seal(f.member,{recipient:f.uid(f.owner),recipientPublicKey:f.key(f.owner),kind:"agent-commons/1",payload:{v:"agent-commons/1",id:randomUUID(),kind:"profile-control",thread:f.content,profileId:f.profile.id,wire:body,bodyHash:digest(body),expiresAt:new Date(Date.now()+3600000).toISOString()}});
   await assert.rejects(f.engine.receive(envelope),{code:"NOT_ADMITTED"});assert.deepEqual(f.engine.store.get("proposals",[]),[]);
 });
+// Namespace alignment: a Space works across self-certifying namespaces. The
+// owner creates it, the member is invited and accepts (joins), the policy is
+// written from the verified head, and a content message crosses the real gate
+// in both directions of owner/member namespace.
+for(const [ownerNs,memberNs] of [["agentnet","foundation"],["foundation","agentnet"],["pillar","agentnet"]]){
+  test(`a ${ownerNs} owner's Space admits a ${memberNs} member that joined, end to end`,async t=>{
+    const f=fixture(t,[ownerNs,memberNs,memberNs,ownerNs]);
+    assert.match(f.uid(f.owner),new RegExp(`^uuaid:${ownerNs}:agent:`));assert.match(f.uid(f.member),new RegExp(`^uuaid:${memberNs}:agent:`));
+    const head=verifiedHead(f.store.loadRoster(f.groupId));
+    assert.equal(head.members.find(row=>row.uuaid===f.uid(f.owner)).role,"admin");
+    assert.equal(head.members.find(row=>row.uuaid===f.uid(f.member)).status,"active","the member joined");
+    assert.equal(selfCheck(f.owner._identity,f.store.loadRoster(f.groupId)),true);assert.equal(selfCheck(f.member._identity,f.store.loadRoster(f.groupId)),true);
+    assert.deepEqual([...f.policy.channels[f.content].members].sort(),[f.uid(f.owner),f.uid(f.member)].sort());
+    const deliveries=[];
+    const peer=new AgentCommons({keychain:f.member,policy:f.policy,transport:{deliver:async envelope=>{deliveries.push(envelope);return {accepted:true}}}});peer.addProfile(f.profile);t.after(()=>peer.store.close());
+    await peer.send({recipient:f.uid(f.owner),profileId:f.profile.id,thread:f.content,body:`from ${memberNs} to ${ownerNs}`});
+    assert.equal(deliveries.length,1);
+    const received=await f.engine.receive(deliveries[0]);
+    assert.equal(received.body,`from ${memberNs} to ${ownerNs}`);assert.equal(received.sender,f.uid(f.member));
+    const local=f.uid(f.member).split(":")[3];
+    for(const ns of ["foundation","pillar","agentnet"].filter(n=>n!==memberNs))
+      await assert.rejects(f.engine.trust.authorize(`uuaid:${ns}:agent:${local}`,f.key(f.member),"commons:message"),{code:"NOT_ADMITTED"});
+    await assert.rejects(f.engine.trust.authorize(`uuaid:zilligon:agent:${local}`,f.key(f.member),"commons:message"),{code:"AGENT_ONLY"});
+  });
+}
 test("P-5 leave removes content authority before actual engine flush",async t=>{
   const f=fixture(t),deliveries=[];
   const peer=new AgentCommons({keychain:f.member,policy:f.policy,transport:{deliver:async envelope=>{deliveries.push(envelope);return {accepted:true}}}});peer.addProfile(f.profile);t.after(()=>peer.store.close());

@@ -121,7 +121,7 @@ test("continuity.mjs:233 — weak owner key is refused with ContinuityError INTE
 // ────────────────────────────────────────────────────── 4. governance.mjs:25 ──
 
 test("governance.mjs:25 (C5) — weak key reaching verifyDetached is refused with INVALID_SIGNATURE", () => {
-  const weakUuaid = `uuaid:local:agent:${Keychain.localIdFromKey(Buffer.from(IDENTITY, "hex"))}`;
+  const weakUuaid = `uuaid:foundation:agent:${Keychain.localIdFromKey(Buffer.from(IDENTITY, "hex"))}`;
   const doc = {
     v: "agent-commons/1",
     id: randomUUID(),
@@ -142,7 +142,7 @@ test("governance.mjs:25 (C5) — weak key reaching verifyDetached is refused wit
 // ──────────────────────────────────────────────────────── 5. profiles.mjs:85 ──
 
 test("profiles.mjs:85 (C5) — weak key reaching verifyDetached is refused with Invalid document signature", () => {
-  const weakUuaid = `uuaid:local:agent:${Keychain.localIdFromKey(Buffer.from(IDENTITY, "hex"))}`;
+  const weakUuaid = `uuaid:foundation:agent:${Keychain.localIdFromKey(Buffer.from(IDENTITY, "hex"))}`;
   const doc = {
     v: "agent-commons/1",
     id: randomUUID(),

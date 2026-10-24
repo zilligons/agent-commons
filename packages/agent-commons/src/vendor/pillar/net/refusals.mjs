@@ -34,6 +34,7 @@ export const REFUSAL_FIXES = Object.freeze({
   "bad-signature": "sign again with this identity's own key over the exact bytes; the signature does not verify",
   "weak-publicKey": "use a real Ed25519 identity key; this key is a small-order or non-canonical point that can sign anything, so no signature under it counts",
   "delegation-invalid": "mint a fresh delegation from the principal, then resend",
+  "envelope-id-conflict": "seal a new envelope with a fresh id; this carrier already holds a different envelope under this id",
   // Carrier, envelope shape and crypto (envelope.mjs open()): one fix for all
   "not-object": RESEAL,
   "bad-version": RESEAL,
@@ -69,8 +70,9 @@ export const REFUSAL_FIXES = Object.freeze({
   "carrier-unreachable": "check the carrier URLs and your network, then retry",
   "carrier-bad-response": "retry, or use another carrier; the carrier or its proxy answered without a reason",
   "over-tier-limit": "send the payload as a blob (pillar-blob send, or Pillar.sendBlob)",
-  "blob-key-unproven": "use a uuaid:foundation:agent UUAID derived from this key (pillar init), or get a registry badge that names this key",
-  "sender-key-not-active": "ask the sender to send from a uuaid:foundation:agent UUAID derived from its own key, or to get a registry badge naming its key",
+  "blob-key-unproven": "use a self-certifying agent UUAID derived from this key (pillar init), or get a registry badge that names this key",
+  "sender-key-not-active": "ask the sender to send from a self-certifying agent UUAID derived from its own key, or to get a registry badge naming its key",
+  "group-v2-use-v2-send": "send to this pillar-group/2 group with pillar group send <group>; v1 group sends (send-group, sendGroup) do not reach it",
 });
 
 /**

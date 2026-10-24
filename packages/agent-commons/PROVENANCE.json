@@ -1,37 +1,24 @@
 {
   "upstreamPackage": "@uuaid/pillar",
-  "upstreamVersion": "2.0.2",
-  "sourceTarball": "https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.0.2.tgz",
+  "upstreamVersion": "2.2.0",
+  "sourceTarball": "https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.2.0.tgz",
+  "sourceTarballSha256": "605ec9381b12d7df620d400bd2225f2b294e31e0c85cdb68bb8b7330ce7ff87b",
+  "sourceTarballIntegrity": "sha512-5CDotCO87Ec6PWSjMz2e+T7R/XGJZL2t26bK8+XHkaWE8PQz83eZy6VgLRmabnsBOjIbk206SAhmAe4ACFrwVw==",
   "upstreamRepository": "https://github.com/uuaid/pillar",
   "license": "Apache-2.0",
   "vendoring": "byte-identical published lightweight modules; not the native carrier/libp2p runtime",
   "files": {
-    "blob/blob.mjs": "6795e4fa34ca5ba0b9e13d8339ffdd504d3e003732a4b2190348855f6bb9d41c",
+    "blob/blob.mjs": "ba397d8626b71753797313d720ea38fdffed8bb8f7dba2999493fe69f89679bb",
     "crypto/e2e.mjs": "538965c2834c7bae4c508fd203ae757c3e2a286c4395dc90b0f5131cc123f159",
-    "groups-v2.mjs": {
-      "sha256": "547e7824704e7af3c0438cd99db3793bda892c287b1db343740930ef917b8d7a",
-      "source": "pillar commit 8db6210 (local, no remote - not published)"
-    },
-    "groups.mjs": {
-      "sha256": "4019df0f33c4ff65dbf40bfbacc0a69fb4a9078219b84272052972140201f961",
-      "source": "pillar commit 8db6210 (local, no remote - not published)"
-    },
-    "identity/jcs.mjs": "31fb70dea7a5d2bfda4f3ec28301467132962a5a1c64dc99c8f6f89d87be33dc",
-    "identity/keychain.mjs": {
-      "sha256": "a8fc75fa3d3305ed4b994e7c998b09314294b9552456a652e033bcfde4a39d9f",
-      "source": "pillar commit 2ef548d (local, no remote - not published)"
-    },
+    "groups-v2.mjs": "08d1dcee89f177d4145e3fbd7ba34d5743fa971c6a34774e399a6577a7301e33",
+    "groups.mjs": "4019df0f33c4ff65dbf40bfbacc0a69fb4a9078219b84272052972140201f961",
+    "identity/jcs.mjs": "7ad009961c4d4fcee506aa666c03c485fc2efc2018ca5a3edbdcccd959b6b79f",
+    "identity/keychain.mjs": "9b651a5e9b38a101d65f1ddcfbe15dc2d99f8ad04345a2bb6e02ee445e6005e6",
     "identity/tier.mjs": "ecd6f0a2bdf0c513efd80cc6a4595e32b2776485c813d2f95281d28257d3dacb",
-    "net/carrier-client.mjs": "e4cd6541217c6d2712f24456bfe820f6063f0efc837b932646fd4b93cddb7b3c",
+    "net/carrier-client.mjs": "6add53819e124c026618b5adbe601d0cb5511088bab295bf0812a06ccf00e47c",
     "net/delegation.mjs": "902248d8c9e9fabd5644f7308ed3eeb725f196d7aa5b3ac719db00699dff498d",
-    "net/envelope.mjs": {
-      "sha256": "7238af1e2810ab927f8cde5da7d86e5132cc21e54cb545f6f091dcd6b45a25b9",
-      "source": "pillar commit 2ef548d (local, no remote - not published)"
-    },
-    "net/refusals.mjs": {
-      "sha256": "dcd52629b4f6e299c5b10446aa404a58a105685fd00575a16fcdc2e01ddc1cc8",
-      "source": "pillar commit 2ef548d (local, no remote - not published)"
-    },
+    "net/envelope.mjs": "7238af1e2810ab927f8cde5da7d86e5132cc21e54cb545f6f091dcd6b45a25b9",
+    "net/refusals.mjs": "4b6cf8b44feae411230b10093900b8ce51129605ba61f2e06e878b997d001117",
     "net/seed-tier.mjs": "18ed2354399ef4f940052b25098895a4273fc7ba6e86d37b23541b0c1b0d503d"
   }
 }

@@ -35,7 +35,8 @@
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { jcs } from "../identity/jcs.mjs";
-import { Keychain, localIdFromKey } from "../identity/keychain.mjs";
+import { Keychain, keyDerivedUuaidFor, keyDerivesUuaid } from "../identity/keychain.mjs";
+export { SELF_CERTIFYING_NAMESPACES } from "../identity/keychain.mjs";
 import { ABSOLUTE_MAX_BODY, TIER_DEFAULTS } from "../identity/tier.mjs";
 import { REFUSAL_FIXES } from "../net/refusals.mjs";
 
@@ -51,8 +52,9 @@ export const NONCE_BYTES = 12;
 export const DEK_BYTES = 32;
 /** keyId a broker request presents when the identity proves itself by its own key. */
 export const SELF_CERTIFIED_KEY_ID = "self-certified:ed25519";
-/** The one UUAID namespace and object type the broker accepts on the self-certified path. */
+/** @deprecated Default minting namespace only; verification uses SELF_CERTIFYING_NAMESPACES. */
 export const SELF_CERTIFIED_NAMESPACE = "foundation";
+/** The object type the broker accepts across self-certifying namespaces. */
 export const SELF_CERTIFIED_OBJECT_TYPE = "agent";
 
 // ---------------------------------------------------------------- errors ---
@@ -170,26 +172,22 @@ export function mkObjectName() {
 
 // ------------------------------------------------------ self-certified ---
 /**
- * The one UUAID a key self-certifies, rebuilt in full:
- * `uuaid:foundation:agent:` + sha256(publicKey)[:16] as a UUID (localIdFromKey,
- * the twin of pillar-client's localIdFromPublicKey). Null for a malformed key.
+ * Rebuild a key-derived agent UUAID in a self-certifying namespace.
+ * Foundation remains the default. Null for a malformed key or registry namespace.
  */
-export function selfCertifiedUuaidFor(publicKeyHex) {
-  if (typeof publicKeyHex !== "string" || !/^[0-9a-f]{64}$/i.test(publicKeyHex)) return null;
-  const localId = localIdFromKey(Buffer.from(publicKeyHex, "hex"));
-  return `uuaid:${SELF_CERTIFIED_NAMESPACE}:${SELF_CERTIFIED_OBJECT_TYPE}:${localId}`;
+export function selfCertifiedUuaidFor(publicKeyHex, namespace = "foundation") {
+  return keyDerivedUuaidFor(publicKeyHex, { namespace, objectType: SELF_CERTIFIED_OBJECT_TYPE });
 }
 
 /**
  * True only when `uuaid` is EXACTLY the UUAID the key self-certifies (full
- * string, namespace and object type included, the broker's rule); such an
+ * string, self-certifying namespace and agent object type included); such an
  * identity uses the broker without a registry badge. A device, a service,
- * another namespace, or a matching local id under any other prefix is not
+ * a registry namespace, or a matching local id under any other prefix is not
  * self-certified: it needs a registry badge naming its key.
  */
 export function isSelfCertifiedUuaid(uuaid, publicKeyHex) {
-  const expected = selfCertifiedUuaidFor(publicKeyHex);
-  return expected !== null && uuaid === expected;
+  return keyDerivesUuaid(publicKeyHex, uuaid, SELF_CERTIFIED_OBJECT_TYPE);
 }
 
 /**
@@ -471,7 +469,7 @@ export async function prepareBrokerBlobSend(keychain, { data, envelopeId, recipi
 
 /**
  * Production receive path; the sender key gate precedes broker redemption.
- * A sender whose UUAID is exactly the uuaid:foundation:agent UUAID of the
+ * A sender whose UUAID is exactly a self-certifying agent UUAID of the
  * ref's verified signing key passes without a badge; any other sender needs
  * a fresh registry badge naming that key (client.assertRegistryActiveSender).
  *

@@ -16,28 +16,35 @@ function setup(scope="local"){
   runtimes.forEach(r=>{if(scope!=="global")r.addProfile(profile);else r.store.set("profiles",[profile])});
   return {keys,policy,runtimes,profile};
 }
+// Hashes of the twelve files inside the published @uuaid/pillar 2.2.0 tarball
+// (sha256 605ec938…f87b), measured from the tarball, not from PROVENANCE.json:
+// the manifest is generated from the vendored bytes, so on its own it proves
+// consistency, not origin.
+const PILLAR_2_2_0_FILES={
+  "blob/blob.mjs":"ba397d8626b71753797313d720ea38fdffed8bb8f7dba2999493fe69f89679bb",
+  "crypto/e2e.mjs":"538965c2834c7bae4c508fd203ae757c3e2a286c4395dc90b0f5131cc123f159",
+  "groups-v2.mjs":"08d1dcee89f177d4145e3fbd7ba34d5743fa971c6a34774e399a6577a7301e33",
+  "groups.mjs":"4019df0f33c4ff65dbf40bfbacc0a69fb4a9078219b84272052972140201f961",
+  "identity/jcs.mjs":"7ad009961c4d4fcee506aa666c03c485fc2efc2018ca5a3edbdcccd959b6b79f",
+  "identity/keychain.mjs":"9b651a5e9b38a101d65f1ddcfbe15dc2d99f8ad04345a2bb6e02ee445e6005e6",
+  "identity/tier.mjs":"ecd6f0a2bdf0c513efd80cc6a4595e32b2776485c813d2f95281d28257d3dacb",
+  "net/carrier-client.mjs":"6add53819e124c026618b5adbe601d0cb5511088bab295bf0812a06ccf00e47c",
+  "net/delegation.mjs":"902248d8c9e9fabd5644f7308ed3eeb725f196d7aa5b3ac719db00699dff498d",
+  "net/envelope.mjs":"7238af1e2810ab927f8cde5da7d86e5132cc21e54cb545f6f091dcd6b45a25b9",
+  "net/refusals.mjs":"4b6cf8b44feae411230b10093900b8ce51129605ba61f2e06e878b997d001117",
+  "net/seed-tier.mjs":"18ed2354399ef4f940052b25098895a4273fc7ba6e86d37b23541b0c1b0d503d",
+};
 test("published Pillar source subset matches provenance byte for byte",()=>{
   const manifest=JSON.parse(readFileSync(new URL("../PROVENANCE.json",import.meta.url)));
-  let tarballCount=0,from2ef548d=0,from8db6210=0;
-  const sourceOf8db6210=new Set(["groups-v2.mjs","groups.mjs"]);
-  for(const [file,entry] of Object.entries(manifest.files)){
-    const expectedHash=typeof entry==="string"?entry:entry.sha256;
+  assert.equal(manifest.upstreamVersion,"2.2.0");
+  assert.equal(manifest.sourceTarball,"https://registry.npmjs.org/@uuaid/pillar/-/pillar-2.2.0.tgz");
+  assert.equal(manifest.sourceTarballSha256,"605ec9381b12d7df620d400bd2225f2b294e31e0c85cdb68bb8b7330ce7ff87b");
+  assert.equal(manifest.sourceTarballIntegrity,"sha512-5CDotCO87Ec6PWSjMz2e+T7R/XGJZL2t26bK8+XHkaWE8PQz83eZy6VgLRmabnsBOjIbk206SAhmAe4ACFrwVw==");
+  assert.deepEqual(manifest.files,PILLAR_2_2_0_FILES,"every vendored file comes from the published 2.2.0 tarball");
+  for(const [file,expectedHash] of Object.entries(PILLAR_2_2_0_FILES)){
     const actualHash=createHash("sha256").update(readFileSync(new URL(`../src/vendor/pillar/${file}`,import.meta.url))).digest("hex");
     assert.equal(actualHash,expectedHash,`hash mismatch for ${file}`);
-    if(typeof entry==="string"){
-      tarballCount++;
-    } else {
-      const expectedSource=sourceOf8db6210.has(file)
-        ?"pillar commit 8db6210 (local, no remote - not published)"
-        :"pillar commit 2ef548d (local, no remote - not published)";
-      assert.equal(entry.source,expectedSource,`source mismatch for ${file}`);
-      if(sourceOf8db6210.has(file))from8db6210++;else from2ef548d++;
-    }
   }
-  assert.equal(tarballCount,7,"7 files from 2.0.2 tarball");
-  assert.equal(from2ef548d,3,"3 files from 2ef548d local");
-  assert.equal(from8db6210,2,"2 files from 8db6210 local");
-  assert.equal(manifest.upstreamVersion,"2.0.2");
 });
 test("500 lossless alias/Unicode/control-token combinations",()=>{
   const lexicon={"semantic equivalence":"~0~","Require semantic equivalence":"~1~"};
@@ -51,7 +58,7 @@ test("bad aliases and bounded-fixture violations fail closed",()=>{
 });
 test("one deployable home initializes without registry writes and never overwrites",()=>{
   const home=mkdtempSync(join(tmpdir(),"ac-init-"));
-  try{const first=initialize({home,target:"zilligons.com"});assert.match(first.identity.uuaid,/^uuaid:foundation:agent:/);const loaded=loadRuntime(home);assert.equal(loaded.runtime.profiles().length,1);assert.equal(loaded.runtime.status().auditVerified,true);loaded.store.close();assert.throws(()=>initialize({home}),/not overwritten/);assert.equal(first.certified,false)}finally{rmSync(home,{recursive:true,force:true})}
+  try{const first=initialize({home,target:"zilligons.com"});assert.match(first.identity.uuaid,/^uuaid:agentnet:agent:/);const loaded=loadRuntime(home);assert.equal(loaded.runtime.profiles().length,1);assert.equal(loaded.runtime.status().auditVerified,true);loaded.store.close();assert.throws(()=>initialize({home}),/not overwritten/);assert.equal(first.certified,false)}finally{rmSync(home,{recursive:true,force:true})}
 });
 test("two genuinely independent signed votes adopt a local profile",async()=>{
   const {runtimes:[a,b,c],profile}=setup();

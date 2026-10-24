@@ -1,7 +1,7 @@
 /** Synchronous space policy and operator stops. Queue ownership and sends belong to the adapter. */
 import { isDeepStrictEqual } from "node:util";
-import { keyBindsUuaid, manifestHash } from "./pillar-group.mjs";
-import { agentRecordForRow, agentRecordsFromVerifiedHead, verifiedHead, selfCheck, signAndApplyNext } from "./manifest.mjs";
+import { manifestHash } from "./pillar-group.mjs";
+import { agentRecordForRow, agentRecordsFromVerifiedHead, keyBindsRow, verifiedHead, selfCheck, signAndApplyNext } from "./manifest.mjs";
 import { prunePendingRemovals, validateAdapterState } from "./store.mjs";
 import { RegistryTrust } from "../trust.mjs";
 
@@ -103,7 +103,7 @@ export function checkPolicy(policy,rec,self,state,ext,allowlist,options){
   const saved=store.loadRoster(state.groupId),savedState=loaded?.state;
   if(!savedState)throw new PolicyError("AdapterAbsentError","No persisted adapter state for policy check");
   const expected=latched(savedState)?closed(state.groupId):expectedPolicy(saved,self,savedState,verifiedHead(saved).ext.commons,now);
-  const bound=Object.entries(policy.agents??{}).every(([uuaid,agent])=>keyBindsUuaid(uuaid,agent?.publicKey)&&agent?.kind==="agent"&&isDeepStrictEqual(agent?.capabilities,["commons:message"]));
+  const bound=Object.entries(policy.agents??{}).every(([uuaid,agent])=>keyBindsRow(uuaid,agent?.publicKey)&&agent?.kind==="agent"&&isDeepStrictEqual(agent?.capabilities,["commons:message"]));
   if(policy===engine.policy&&policy===engine.trust.policy&&bound&&POLICY_FIELDS.every(field=>isDeepStrictEqual(policy[field],expected[field])))return true;
   return stop(policy,state,"policy-mismatch",options);
 }

@@ -13,6 +13,9 @@ export const agentKeys = sqliteTable("agent_keys", {
   id: text("id").primaryKey(),
   privateKey: text("private_key").notNull(),
   publicKey: text("public_key").notNull(),
+  // Set when the key is created. Rows from before this column read "foundation",
+  // the namespace their UUAID was always derived in.
+  uuaidNamespace: text("uuaid_namespace").notNull().default("foundation"),
 });
 export type Agent = {
   id: string;

@@ -1329,7 +1329,7 @@ function Workspace() {
             <>
               <div>
                 <span className="tiny-dot" />
-                Agent Commons 0.2.0-alpha.2
+                Agent Commons 0.2.0-alpha.3
                 <span className="status-divider" />
                 <span>Package release prepared</span>
               </div>

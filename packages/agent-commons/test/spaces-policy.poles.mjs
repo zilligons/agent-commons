@@ -68,7 +68,7 @@ const mutations=[
   ["R2-direct-write-no-close-on-throw","R2 direct writePolicy",text=>replace(text,'    closePolicies(policy,state.groupId,options.engine);','    void 0;')],
   ["R2-hard-resume-no-identity-check","R2 emergency replacement",text=>replace(text,'    requireSharedPolicy(this.policy,this.engine);','    void 0;')],
   ["R2-own-change-no-recovery-identity-check","R2 direct emergency closure",text=>replace(text,'    if(!isCanonicalTrust(this.engine.trust)||emergencyEngines.has(this.engine)||quarantinedEngines.has(this.engine))requireSharedPolicy(this.policy,this.engine);\n    const {rec,state,now}=this._load(),head=verifiedHead(rec);','    const {rec,state,now}=this._load(),head=verifiedHead(rec);')],
-  ["R2-null-agent-not-guarded","R1d-D3",text=>replace(text,'keyBindsUuaid(uuaid,agent?.publicKey)','keyBindsUuaid(uuaid,agent.publicKey)')],
+  ["R2-null-agent-not-guarded","R1d-D3",text=>replace(text,'keyBindsRow(uuaid,agent?.publicKey)','keyBindsRow(uuaid,agent.publicKey)')],
   ["R2-cursor-schema-unvalidated","R2 schema outsiderScan",text=>replace(text,'  if (!exactKeys(state.outsiderScan, OUTSIDER_SCAN_KEYS) || !posInt(state.outsiderScan.version) || !hex64(state.outsiderScan.hash)) throw badAdapter("outsiderScan: expected {version: positive safe integer, hash: 64-hex}");',''),"src/spaces/store.mjs"],
   ["R2-legacy-cursor-defaulted","R2 legacy adapter",text=>replace(text,'    validateAdapterState(parsed, id);','    parsed.outsiderScan??={version:parsed.consent.manifestVersion,hash:"a".repeat(64)};\n    validateAdapterState(parsed, id);'),"src/spaces/store.mjs"],
   ["R2c-rescan-from-consent",["R2c pole6 a:","R2c pole6 b:","R2c pole6 c:"],text=>replace(text,'scanned.version:0;','scanned.version:state.consent.manifestVersion;')],

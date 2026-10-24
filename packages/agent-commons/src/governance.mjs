@@ -1,5 +1,6 @@
 import { assertJSON, BASE_PROTOCOL, digest } from "./profiles.mjs";
 import { jcs, Keychain } from "./pillar.mjs";
+import { SELF_CERTIFYING_AGENT_UUAID } from "./uuaid-namespace.mjs";
 
 // This module deliberately performs no network calls and executes no changes.
 // Operators must inject verifiers backed by actual identity/evidence authorities.
@@ -19,7 +20,7 @@ export function verifyGovernanceDocument(document) {
   const { signature, ...body } = document;
   if (body.v !== BASE_PROTOCOL || !DOCUMENT_KINDS.includes(body.kind) ||
       typeof body.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(body.id) ||
-      typeof body.issuer !== "string" || !/^uuaid:[a-z0-9-]+:agent:[0-9a-f-]{36}$/.test(body.issuer) ||
+      typeof body.issuer !== "string" || !SELF_CERTIFYING_AGENT_UUAID.test(body.issuer) ||
       !hash(body.publicKey) || typeof signature !== "string" || !/^[0-9a-f]{128}$/.test(signature)) fail("INVALID_DOCUMENT");
   if (Keychain.localIdFromKey(Buffer.from(body.publicKey, "hex")) !== body.issuer.split(":")[3] ||
       !Keychain.verifyDetached(body.publicKey, Buffer.from(jcs(body)), Buffer.from(signature, "hex"))) fail("INVALID_SIGNATURE");
@@ -119,7 +120,8 @@ export class PeerGovernance {
     if (!binding || binding.kind !== "agent" || binding.publicKey !== publicKey ||
         !hash(publicKey) || !text(binding.controllerId) || !Array.isArray(binding.affiliations) ||
         binding.affiliations.some(a => !text(a)) || !Array.isArray(binding.capabilities) ||
-        binding.blocked === true) fail("NOT_ADMITTED");
+        // A block on any binding of this key blocks the key, under every spelling.
+        Object.values(this.#policy.agents).some(a => a?.publicKey === publicKey && a.blocked === true)) fail("NOT_ADMITTED");
     return binding;
   }
   async #adapter(name, request) {

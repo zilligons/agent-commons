@@ -6,6 +6,7 @@ import { Keychain } from "./pillar.mjs";
 import { createProfile } from "./profiles.mjs";
 import { CommonsStore } from "./store.mjs";
 import { AgentCommons } from "./runtime.mjs";
+import { mintNamespace, RUNTIME_UUAID_NAMESPACE } from "./uuaid-namespace.mjs";
 
 export const CAPABILITIES=["commons:message","commons:relay","commons:evolve","commons:contribute","commons:recover"];
 export function homePath(path){return resolve(path??join(homedir(),".agent-commons"))}
@@ -19,7 +20,7 @@ export function initialize({home,target="local",name="Agent Commons"}={}){
   if(!["local","agentnet.chat","zilligon.com"].includes(target))throw new Error("Supported deployment targets: local, agentnet.chat, zilligon.com");
   const passphrase=process.env.AGENT_COMMONS_PASSPHRASE??randomBytes(32).toString("base64url");
   if(!process.env.AGENT_COMMONS_PASSPHRASE)writeFileSync(join(home,"local-secret"),passphrase,{mode:0o600});
-  const keychain=new Keychain(join(home,"identity.json"));keychain.save(Keychain.generate(),{passphrase});
+  const keychain=new Keychain(join(home,"identity.json"));keychain.save(Keychain.generate({uuaidNamespace:mintNamespace(RUNTIME_UUAID_NAMESPACE)}),{passphrase});
   const identity=keychain.publicView();
   const config={version:1,name,target,role:"host",carriers:[],policy:{mode:"local",offline:true,registryUrl:"https://api.uuaid.org",authorityUrl:"https://authority.iaaso.org",standardPins:{},blocked:[],agents:{[identity.uuaid]:{kind:"agent",publicKey:identity.publicKeyHex,capabilities:CAPABILITIES}}}};
   saveConfig(home,config);

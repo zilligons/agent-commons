@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,23 +19,23 @@ import { RegistryTrust } from "../src/trust.mjs";
 import { SpaceStore } from "../src/spaces/store.mjs";
 import {
   verifiedHead, selfCheck, signAndApplyNext, agentRecordsFromVerifiedHead,
-  agentRecordForRow, assertAsciiKeys, ManifestError,
+  agentRecordForRow, assertAsciiKeys, keyBindsRow, ManifestError,
 } from "../src/spaces/manifest.mjs";
 
 // ── in-test fixtures (C12) ────────────────────────────────────────────────
 
 function mkHome() { return mkdtempSync(join(tmpdir(), "spaces-manifest-")); }
 
-function identity() {
-  const id = Keychain.generate();
+function identity(uuaidNamespace = "foundation") {
+  const id = Keychain.generate({ uuaidNamespace });
   return { uuaid: id.uuaid, publicKeyHex: id.publicKeyHex, privateKey: id.privateKey };
 }
 
 /** admin (active) + m1 (removed at v2) + m2 (invited) — chain verified in-test. */
-function fixtureRoster() {
-  const admin = identity();
-  const m1 = identity();
-  const m2 = identity();
+function fixtureRoster({ admin: adminNs = "foundation", members: memberNs = "foundation" } = {}) {
+  const admin = identity(adminNs);
+  const m1 = identity(memberNs);
+  const m2 = identity(memberNs);
   const genesis = signManifest(buildGenesis({
     name: "pole-space", creator: admin,
     members: [{ uuaid: m1.uuaid, key: m1.publicKeyHex }, { uuaid: m2.uuaid, key: m2.publicKeyHex }],
@@ -112,7 +112,7 @@ test("B-3 CONTROL: keyed by full uuaid, removed rows skipped, a non-binding row 
   assert.deepEqual(Object.keys(agents).sort(), [fx.admin.uuaid, fx.m2.uuaid].sort(),
     "keys are FULL uuaids: the active admin and the invited member, never the removed m1, never a local id");
   assert.ok(!(fx.m1.uuaid in agents), "the removed row is skipped");
-  for (const u of Object.keys(agents)) assert.match(u, /^uuaid:foundation:agent:[0-9a-f-]{36}$/);
+  for (const u of Object.keys(agents)) assert.match(u, /^uuaid:(?:foundation|pillar|agentnet):agent:[0-9a-f-]{36}$/);
   assert.deepEqual(agents[fx.m2.uuaid], {
     kind: "agent", publicKey: fx.m2.publicKeyHex, capabilities: ["commons:message"],
   }, "P-2: exactly [commons:message], no credentialId/controllerId");
@@ -129,27 +129,74 @@ test("B-3 CONTROL: keyed by full uuaid, removed rows skipped, a non-binding row 
 
 // ── B-4: the namespace pole, against the real engine trust gate ──────────
 
-test("B-4 CONTROL: an other-namespace sender with a member key is refused NOT_ADMITTED; the member itself is admitted", async () => {
-  const fx = fixtureRoster();
-  const agents = agentRecordsFromVerifiedHead(fx.rec);
-  const trust = new RegistryTrust({ policy: { mode: "local", agents } });
+test("B-4 CONTROL: a re-spelled member key is refused NOT_ADMITTED, a registry spelling AGENT_ONLY; the member itself is admitted", async () => {
+  for (const [adminNs, memberNs] of [["foundation", "foundation"], ["agentnet", "foundation"], ["foundation", "agentnet"], ["pillar", "agentnet"]]) {
+    const fx = fixtureRoster({ admin: adminNs, members: memberNs });
+    const agents = agentRecordsFromVerifiedHead(fx.rec);
+    const trust = new RegistryTrust({ policy: { mode: "local", agents } });
+    const localId = fx.m2.uuaid.split(":")[3];
 
-  // Same local id, same key, OTHER namespace: passes the engine's own
-  // local-id-only checks (KEY_BINDING) and dies at NOT_ADMITTED, because
-  // policy.agents holds only full uuaid:foundation:agent: keys (B-4).
-  const localId = fx.m2.uuaid.split(":")[3];
-  const other = `uuaid:other:agent:${localId}`;
-  await assert.rejects(() => trust.authorize(other, fx.m2.publicKeyHex, "commons:message"),
-    (e) => e.code === "NOT_ADMITTED", "refused NOT_ADMITTED, not KEY_BINDING");
+    // Same local id, same key, ANOTHER self-certifying namespace: passes rule 1
+    // and KEY_BINDING, and dies at NOT_ADMITTED, because policy.agents holds
+    // only each row's exact spelling (B-4).
+    for (const ns of ["foundation", "pillar", "agentnet"].filter((n) => n !== memberNs)) {
+      await assert.rejects(() => trust.authorize(`uuaid:${ns}:agent:${localId}`, fx.m2.publicKeyHex, "commons:message"),
+        (e) => e.code === "NOT_ADMITTED", `${ns} re-spelling of a ${memberNs} member refused NOT_ADMITTED`);
+    }
+    // A namespace a key cannot claim never reaches policy.
+    await assert.rejects(() => trust.authorize(`uuaid:other:agent:${localId}`, fx.m2.publicKeyHex, "commons:message"),
+      (e) => e.code === "AGENT_ONLY", "a registry spelling is refused at the rule-1 shape gate");
 
-  // The legitimate member IS admitted by the same policy (the pole's second arm:
-  // a local-id-keyed policy would refuse this one — that is the §11 mutant).
-  const ok = await trust.authorize(fx.m2.uuaid, fx.m2.publicKeyHex, "commons:message");
-  assert.equal(ok.tier, "local-policy-pinned");
+    // The legitimate member IS admitted by the same policy (the pole's second arm:
+    // a local-id-keyed policy would refuse this one — that is the §11 mutant).
+    const ok = await trust.authorize(fx.m2.uuaid, fx.m2.publicKeyHex, "commons:message");
+    assert.equal(ok.tier, "local-policy-pinned");
 
-  // The removed member is not in the policy at all.
-  await assert.rejects(() => trust.authorize(fx.m1.uuaid, fx.m1.publicKeyHex, "commons:message"),
-    (e) => e.code === "NOT_ADMITTED");
+    // The removed member is not in the policy at all.
+    await assert.rejects(() => trust.authorize(fx.m1.uuaid, fx.m1.publicKeyHex, "commons:message"),
+      (e) => e.code === "NOT_ADMITTED");
+
+    // If a policy ever admitted one key under two spellings, both are refused:
+    // one key is one voice (DUPLICATE_KEY), whatever the roster says.
+    const respelled = `uuaid:${memberNs === "agentnet" ? "foundation" : "agentnet"}:agent:${localId}`;
+    const doubled = new RegistryTrust({ policy: { mode: "local", agents: { ...agents, [respelled]: agents[fx.m2.uuaid] } } });
+    for (const uuaid of [fx.m2.uuaid, respelled]) {
+      await assert.rejects(() => doubled.authorize(uuaid, fx.m2.publicKeyHex, "commons:message"),
+        (e) => e.code === "DUPLICATE_KEY", `${uuaid} refused DUPLICATE_KEY`);
+    }
+  }
+});
+
+test("B-6/B-1 rule 1: every self-certifying namespace binds; a registry spelling or another key's local id does not", () => {
+  for (const [adminNs, memberNs] of [["agentnet", "foundation"], ["foundation", "agentnet"], ["pillar", "pillar"]]) {
+    const fx = fixtureRoster({ admin: adminNs, members: memberNs });
+    assert.equal(selfCheck(fx.admin, fx.rec), true, `${adminNs} admin passes B-6`);
+    assert.equal(selfCheck(fx.m2, fx.rec), true, `${memberNs} member passes B-6`);
+    assert.deepEqual(agentRecordForRow({ uuaid: fx.m2.uuaid, key: fx.m2.publicKeyHex }).publicKey, fx.m2.publicKeyHex);
+    const local = fx.admin.uuaid.split(":")[3];
+    for (const ns of ["zilligon", "iaaso", "local"]) {
+      const registry = { ...fx.admin, uuaid: `uuaid:${ns}:agent:${local}` };
+      assert.equal(keyBindsRow(registry.uuaid, registry.publicKeyHex), false, `${ns} does not bind`);
+      assert.throws(() => selfCheck(registry, fx.rec), { name: "SelfCheckError" }, `${ns} keychain refused at B-6`);
+      assert.throws(() => agentRecordForRow({ uuaid: registry.uuaid, key: registry.publicKeyHex }), { name: "KeyBindingError" });
+    }
+    const otherLocal = fx.m2.uuaid.split(":")[3];
+    const borrowed = { ...fx.admin, uuaid: `uuaid:${adminNs}:agent:${otherLocal}` };
+    assert.throws(() => selfCheck(borrowed, fx.rec), { name: "SelfCheckError" }, "another key's local id refused at B-6");
+    assert.throws(() => agentRecordForRow({ uuaid: borrowed.uuaid, key: fx.admin.publicKeyHex }), { name: "KeyBindingError" });
+    for (const objectType of ["service", "human"]) {
+      assert.equal(keyBindsRow(`uuaid:${adminNs}:${objectType}:${local}`, fx.admin.publicKeyHex), false, `${objectType} does not bind`);
+    }
+  }
+  // The strict-key half on its own: a small-order point is lower-case hex and its
+  // uuaid is correctly derived (rule 1 alone would accept it), but no signature
+  // under it counts, so it binds nothing in any namespace.
+  const weak = JSON.parse(readFileSync(new URL("./fixtures/ed25519-small-order.vectors.json", import.meta.url), "utf8"))["3s2-small-order-member-key"];
+  for (const ns of ["foundation", "pillar", "agentnet"]) {
+    const uuaid = weak.uuaid.replace(":foundation:", `:${ns}:`);
+    assert.equal(keyBindsRow(uuaid, weak.key), false, `small-order key binds ${ns}`);
+    assert.throws(() => agentRecordForRow({ uuaid, key: weak.key }), { name: "KeyBindingError" });
+  }
 });
 
 // ── V-6: sign → verify → own-store-save → return ─────────────────────────

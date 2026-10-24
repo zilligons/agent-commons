@@ -24,11 +24,10 @@ function _ser(v) {
   if (typeof v === "bigint") return v.toString();
   if (Array.isArray(v)) return "[" + v.map(_ser).join(",") + "]";
   if (typeof v === "object") {
-    // UTF-16 code unit sort — the RFC 8785 requirement.
-    const keys = Object.keys(v).sort((a, b) => {
-      const ab = Buffer.from(a, "utf16le"), bb = Buffer.from(b, "utf16le");
-      return Buffer.compare(ab, bb);
-    });
+    // RFC 8785 §3.2.3: keys sort by their UTF-16 code units, which is exactly
+    // JavaScript's default string order. (Comparing UTF-16LE *bytes* is not: it
+    // puts "Ā" (U+0100) before "a", and disagreed with @uuaid/pillar-client.)
+    const keys = Object.keys(v).sort(); // @rule jcs.code-unit-order
     return "{" + keys.map(k => JSON.stringify(k) + ":" + _ser(v[k])).join(",") + "}";
   }
   throw new Error("JCS: unsupported type " + typeof v);

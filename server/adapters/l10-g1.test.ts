@@ -3276,11 +3276,11 @@ sys.exit(0)
       assert.ok(mutantTViols.length > 0, "Mutant T: satisfies expression namespace alias must fail check");
       assert.ok(mutantTViols.some((v) => v.includes("computed element access on forTest namespace alias")), "Mutant T: must flag alias element access");
 
-      // MUTANT U (Item C Pole): computed key on l10-limits namespace outside l10-process (the R16-P2-3 note)
-      const mutantUCode = `import * as p from "./l10-limits"; const k="resetL10TrialCounterForTest"; p[k]({bypass:true});`;
+      // MUTANT U (Item C Pole): computed key on config namespace outside l10-process (the R16-P2-3 note)
+      const mutantUCode = `import * as p from "./config"; const k="_setL10BinariesForTest"; p[k]();`;
       const mutantUViols = checkSourceAst("production-file-fixture.ts", mutantUCode);
-      assert.ok(mutantUViols.length > 0, "CONTROL: computed key on l10-limits namespace must fail check");
-      assert.ok(mutantUViols.some((v) => v.includes("computed element access on forTest namespace")), "CONTROL: must flag computed key on l10-limits");
+      assert.ok(mutantUViols.length > 0, "CONTROL: computed key on config namespace must fail check");
+      assert.ok(mutantUViols.some((v) => v.includes("computed element access on forTest namespace")), "CONTROL: must flag computed key on config");
 
       // MUTANT: pre-fix checker reported 0 violations because it only tracked specifier.includes("l10-process")
       const preFixChecker = (code: string): string[] => {
@@ -3305,7 +3305,7 @@ sys.exit(0)
         });
         return viols;
       };
-      assert.equal(preFixChecker(mutantUCode).length, 0, "MUTANT: pre-fix checker reported 0 violations on l10-limits namespace");
+      assert.equal(preFixChecker(mutantUCode).length, 0, "MUTANT: pre-fix checker reported 0 violations on config namespace");
 
       // Item C / R17-P2-2 fixture-spawner exemption poles:
       // spawnClaudeL10ChildForTest is admitted ONLY in exact seam files,

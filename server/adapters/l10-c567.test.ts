@@ -63,10 +63,10 @@ async function main() {
   assert.equal(argvCodex[argvCodex.length - 1], "-",
     "C5: Codex argv must end with the stdin marker");
 
-  // MUTANT — Grok route gated: buildL10Argv("release") throws.
+  // MUTANT — release uses Gemini HTTP; no CLI argv is defined.
   assert.throws(() => buildL10Argv({ slotId: "release", cwd: "/tmp", stdinPath: "/dev/stdin" }),
     (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE",
-    "C5: Grok route must be gated until the stdin gate resolves");
+    "C5: Argon release slot must use its metered Gemini HTTP route");
 
   // MUTANT — historicalToRuntime honors its historical argument.
   assert.equal(historicalToRuntime("claude_fable_5_1", "continuity"), "claude-fable-5-1");
@@ -75,10 +75,8 @@ async function main() {
   assert.equal(historicalToRuntime("claude_fable_5_1", "governance"), null,
     "C5: right id, wrong slot must return null");
 
-  // MUTANT — integration (Prism) is BLOCKED.
-  assert.throws(() => assertSlotEligibleForL10("integration"),
-    (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE",
-    "C5: integration (Prism) must be BLOCKED");
+  // Prism now has a metered HTTP route; CLI argv support remains separately gated.
+  assertSlotEligibleForL10("integration");
 
   // ---- C6 ----
 
@@ -138,7 +136,7 @@ async function main() {
     assert.ok(src.includes("empty-value clause") && src.includes("UNCLASSIFIED"),
       "C7+R10: scrubEnv JSDoc must state the empty-value presence clause applies to classified names");
 
-    console.log("PASS C5: argv byte-for-byte §a (Claude ends --restricted, Codex ends -, Grok gated), historicalToRuntime honors argument, Prism BLOCKED.");
+    console.log("PASS C5: argv byte-for-byte §a (Claude ends --restricted, Codex ends -, Grok gated), historicalToRuntime honors argument, Prism HTTP eligible.");
     console.log("PASS C6: stderr overflow STDERR_OVERFLOW, stdout overflow STDOUT_OVERFLOW, configEnvRefusedNames CONFIG_UNVERIFIED on missing/unparseable, writePromptTempFile deleted.");
     console.log("PASS C7: empty-valued-name refusal documented in scrubEnv JSDoc.");
   } finally {

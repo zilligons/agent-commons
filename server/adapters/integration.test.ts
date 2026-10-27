@@ -15,13 +15,11 @@
  *  - the one-hour skip for a fresh non-retryable denial is honored through the
  *    adapter layer itself (scripted stub failure), per design §10 test 4.
  *
- * Isolation (same pattern as server/cohort.test.ts): the process cwd is switched
- * to a fresh temp dir BEFORE the first import of `./cohort` (which imports
- * `storage`, opening `commons.db` relative to cwd, and `loadAdaptersConfig`,
- * reading `agent-commons.adapters.json` relative to cwd). The `packages` symlink
- * keeps the portable package resolvable. A temp fixture path is passed via
- * AGENT_COMMONS_STUB_FIXTURES so the stub never touches the repo fixtures.
- * Nothing outside the temp dir is written; the real preview db is never opened.
+ * Isolation: direct execution refuses, and the node test runner installs the
+ * memory-only storage preload before application imports. The scenario then
+ * switches cwd to a fresh temp dir for its adapter config and stub fixtures.
+ * The `packages` symlink keeps the portable package resolvable. A temp fixture
+ * path is passed via AGENT_COMMONS_STUB_FIXTURES so the stub uses that fixture.
  *
  */
 import assert from "node:assert/strict";
@@ -30,9 +28,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("../offline-test-home.mjs");
+
 const root = fileURLToPath(new URL("../..", import.meta.url)); // server/adapters/ -> repo root
 const temp = mkdtempSync(join(tmpdir(), "l2-integration-"));
 const original = process.cwd();
+const originalAppDir = process.env.AGENT_COMMONS_APP_DIR;
 symlinkSync(join(root, "packages"), join(temp, "packages"), "dir");
 
 // Fixture file the stub reads (AGENT_COMMONS_STUB_FIXTURES). One slot ("collaboration")
@@ -66,12 +72,20 @@ writeFileSync(configPath, JSON.stringify({
 process.env.AGENT_COMMONS_STUB_FIXTURES = fixturePath;
 process.env.AGENT_COMMONS_ADAPTER = "stub"; // registered stub for every slot (env override)
 process.chdir(temp);
+process.env.AGENT_COMMONS_APP_DIR = temp;
 
+let fixtureDb: import("node:sqlite").DatabaseSync | undefined;
 try {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { L10AccountingService } = await import("./l10-accounting");
+  const { L10AccountingStore } = await import("./l10-accounting-store");
+  const { createFixtureSpendingPolicy } = await import("./fixture-spending");
+  fixtureDb = new DatabaseSync(":memory:");
+  const accounting = new L10AccountingService(new L10AccountingStore(fixtureDb), { spending: createFixtureSpendingPolicy() });
   const { CohortConsole } = await import("../cohort");
   const { foundingCohort } = await import("../../shared/cohort");
 
-  const c = new CohortConsole();
+  const c = new CohortConsole(accounting);
   assert.equal(c.summary().verified, true, "fresh console must verify before any turn");
 
   // ---- probe(): full 7-slot health check through the registered stub ----
@@ -157,6 +171,9 @@ try {
   //   append an entry — `entries.length` would be 7, not 6. Proven by the
   //   `entries.length === 6` assertion above.
 } finally {
+  fixtureDb?.close();
+  if (originalAppDir === undefined) delete process.env.AGENT_COMMONS_APP_DIR;
+  else process.env.AGENT_COMMONS_APP_DIR = originalAppDir;
   process.chdir(original);
   delete process.env.AGENT_COMMONS_STUB_FIXTURES;
   delete process.env.AGENT_COMMONS_ADAPTER;

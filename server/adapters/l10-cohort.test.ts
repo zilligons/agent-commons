@@ -3,7 +3,7 @@
  *
  * Verifies:
  * - CONTROL: l10-cli through a fixture binary via test entry with fixture ledger -> live-typed result
- * - MUTANT 1: accounting gate refuses at production adapter (inert by default)
+ * - MUTANT 1: accounting admission refuses a production call without a permit
  * - MUTANT 2: non-frozen runtimeModel is refused with MODEL_UNAVAILABLE
  * - MUTANT 3: Terra, Prism, and Grok refused with zero dispatch
  * - MUTANT 4: missing ledger row gives ROUTE_WITNESS_MISSING
@@ -167,7 +167,7 @@ exit 0
     }
 
     // =========================================================================
-    // MUTANT 1: accounting gate refuses at production adapter (inert by default)
+    // MUTANT 1: accounting admission refuses a production call without a permit
     // =========================================================================
     {
       const adapter = new L10CliAdapter();
@@ -241,7 +241,7 @@ exit 0
       // 3c: Grok (release)
       let grokErr: any = null;
       try {
-        await callL10CliForTest(makeReq({ slotId: "release", runtimeModel: "grok-4.7-build-fast" }), {
+        await callL10CliForTest(makeReq({ slotId: "release", runtimeModel: L10_FROZEN_LITERALS.release }), {
           fixtureBin: trackBin,
           skipAccountingGate: true,
         });
@@ -251,7 +251,7 @@ exit 0
       assert.ok(grokErr instanceof AdapterFailure, "MUTANT 3c: Grok must throw AdapterFailure");
       assert.equal(grokErr.code, "MODEL_UNAVAILABLE", "MUTANT 3c: Grok code must be MODEL_UNAVAILABLE");
       assert.ok(
-        grokErr.message.includes("grok route blocked until its prompt/stdin precedence is established"),
+        grokErr.message.includes("Argon requires the metered Gemini HTTP transport"),
         "MUTANT 3c: message must match C5 static text",
       );
     }
@@ -393,7 +393,7 @@ exit 0
       assert.equal(errMissing.code, "SECURITY_VIOLATION", "MUTANT 7: code must be SECURITY_VIOLATION");
     }
 
-    console.log("PASS: l10-cohort adapter (CONTROL, MUTANT 1 accounting gate inert, MUTANT 2 non-frozen model refused, MUTANT 3 Terra/Prism/Grok refused, MUTANT 4 witness missing, MUTANT 5 envelope mismatch, MUTANT 6 exit 75/76 terminal, MUTANT 7 private pool enforcement).");
+    console.log("PASS: l10-cohort adapter (CONTROL, MUTANT 1 missing accounting permit refused, MUTANT 2 non-frozen model refused, MUTANT 3 Terra/Prism/Grok refused, MUTANT 4 witness missing, MUTANT 5 envelope mismatch, MUTANT 6 exit 75/76 terminal, MUTANT 7 private pool enforcement).");
 
     // =========================================================================
     // 8. Brief rev 4 R2: the Claude live route is ENABLED only when the
@@ -402,9 +402,8 @@ exit 0
     // throws MODEL_UNAVAILABLE with the resolver's static reason. The
     // test entry uses fixtureBin / fixtureLedgerPath which override the
     // configured values, so the existing MUTANTs above keep working.
-    // The R2 calls use a private permitPool + skipAccountingGate so the
-    // trial cap (7 turns hit by the earlier MUTANTs) does not affect
-    // the verdict.
+    // The R2 fixture calls use a private permitPool + skipAccountingGate
+    // to isolate route-resolution behavior from accounting admission.
     // =========================================================================
     {
       // For the seats-unset pole, the OTHER two (claude bin + model

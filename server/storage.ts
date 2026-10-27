@@ -5,14 +5,19 @@ import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
+import { L10AccountingStore } from "./adapters/l10-accounting-store";
+import { L10AccountingService } from "./adapters/l10-accounting";
+import { resolveRuntimePaths } from "./runtime-paths";
+import { SQLitePlatformSpending } from "./adapters/platform-spending";
 import { mintNamespace, RUNTIME_UUAID_NAMESPACE } from "../packages/agent-commons/src/uuaid-namespace.mjs";
 
-const sqlite = new Database("commons.db");
+const { databasePath, production } = resolveRuntimePaths();
+const sqlite = new Database(databasePath, { fileMustExist: production });
 // Preserve existing identity/ledger continuity while fixing filesystem exposure.
 // This private preview still requires volume encryption for protection from a
 // whole-home reader; filesystem permissions are not encryption.
 function protectDatabase(){
-  for(const path of ["commons.db","commons.db-wal","commons.db-shm"])
+  for(const path of [databasePath,`${databasePath}-wal`,`${databasePath}-shm`])
     if(existsSync(path))chmodSync(path,0o600);
 }
 sqlite.pragma("journal_mode = WAL");
@@ -38,6 +43,7 @@ export interface IStorage {
   save(state: CommonsState): void;
   key(id: string): { privateKey: string; publicKey: string; uuaidNamespace: string };
   existingPublicKey(id: string): string | null;
+  existingPublicIdentity(id: string): { publicKey: string; uuaidNamespace: string } | null;
   loadNetwork(): any;
   saveNetwork(value: any): void;
 }
@@ -118,8 +124,26 @@ export class DatabaseStorage implements IStorage {
     return key;
   }
   existingPublicKey(id: string): string | null {
-    const row = db.select().from(agentKeys).where(eq(agentKeys.id, id)).get();
-    return row?.publicKey ?? null;
+    return this.existingPublicIdentity(id)?.publicKey ?? null;
+  }
+  existingPublicIdentity(id: string): { publicKey: string; uuaidNamespace: string } | null {
+    const row = db.select({ publicKey: agentKeys.publicKey, uuaidNamespace: agentKeys.uuaidNamespace })
+      .from(agentKeys).where(eq(agentKeys.id, id)).get();
+    return row ?? null;
   }
 }
 export const storage = new DatabaseStorage();
+
+let accounting: L10AccountingService | undefined;
+/** Additive accounting initialization is deferred until a run is requested. */
+export function getAccountingService(): L10AccountingService {
+  if (!accounting) {
+    const accountingStore = new L10AccountingStore(sqlite);
+    accountingStore.seedAttemptWindow(storage.loadCohort()?.budget, Date.now());
+    accounting = new L10AccountingService(accountingStore, {
+      spending: new SQLitePlatformSpending(accountingStore, { history: () => storage.loadCohort()?.entries ?? [] }),
+    });
+    protectDatabase();
+  }
+  return accounting;
+}

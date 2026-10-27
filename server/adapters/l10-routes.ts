@@ -25,8 +25,9 @@ export const L10_FROZEN_LITERALS = Object.freeze({
   collaboration: "claude-opus-5-5",
   security: "claude-sonnet-5-5",
   governance: "gpt-6.1-sol",
-  release: "grok-4.7-build-fast",
-  sustainability: null, // Terra is BLOCKED
+  release: "gemini-4-argon",
+  integration: "gemini-3.8-flash",
+  sustainability: "gpt-5.6-terra", // Exact ID verified through the provider model catalogue.
 } as const);
 
 /**
@@ -39,42 +40,14 @@ export const CLAUDE_ALLOWED_MODELS: readonly string[] = Object.freeze([
   L10_FROZEN_LITERALS.security,
 ] as const);
 
-/** Slot IDs that are live-eligible in v3 (Prism is BLOCKED, Terra is BLOCKED). */
+/** All founding slots are eligible through their frozen metered provider routes. */
 export const L10_LIVE_ELIGIBLE_SLOTS = Object.freeze([
   "continuity", "collaboration", "security", "governance", "release",
+  "integration", "sustainability",
 ] as const);
 
-/** Blocked slots and model identifiers (Terra/sustainability and Prism/integration). */
-export const BLOCKED_SLOTS_AND_MODELS = Object.freeze(new Set([
-  "sustainability",
-  "integration",
-  "terra",
-  "prism",
-  "gpt_5_6_terra",
-  "gemini_3_8_flash",
-]));
-
-export function isBlockedSlotOrModel(identifier: string | null | undefined): boolean {
-  if (!identifier) return false;
-  return BLOCKED_SLOTS_AND_MODELS.has(identifier.toLowerCase());
-}
-
-/**
- * Terra (sustainability, gpt_5_6_terra) is BLOCKED. Any call to the
- * sustainability slot must fail closed at the seam with MODEL_UNAVAILABLE
- * before any transport selection (v3 §a L42, L48-50). Prism (integration)
- * is likewise BLOCKED (Antigravity has no evidenced noninteractive
- * invocation).
- */
+/** Eligibility does not bypass transport metering, credential or permit checks. */
 export function assertSlotEligibleForL10(slotId: string): void {
-  if (isBlockedSlotOrModel(slotId)) {
-    throw new AdapterFailure(
-      "MODEL_UNAVAILABLE",
-      `slot ${slotId} is blocked; L10 does not call it`,
-      null,
-      false,
-    );
-  }
   if (!L10_LIVE_ELIGIBLE_SLOTS.includes(slotId as typeof L10_LIVE_ELIGIBLE_SLOTS[number])) {
     throw new AdapterFailure(
       "MODEL_UNAVAILABLE",
@@ -105,7 +78,8 @@ const HISTORICAL_BY_SLOT: Record<string, string> = {
   collaboration: "claude_opus_5_5",
   security: "claude_sonnet_5_5",
   governance: "gpt_6_1_sol",
-  release: "grok_4_7",
+  release: "gemini_4_argon",
+  integration: "gemini_3_8_flash",
   sustainability: "gpt_5_6_terra",
 };
 
@@ -131,11 +105,8 @@ export function historicalToRuntime(historical: string, slotId: string): string 
  *     --ephemeral --ignore-user-config --strict-config --sandbox
  *     read-only --color never --skip-git-repo-check -
  *     (trailing "-" = read prompt from stdin)
- *   Grok:   CANDIDATE per §a L41: -p "" --prompt-file /dev/stdin --model
- *     grok-4.7-build-fast … — native precedence of empty -p vs
- *     --prompt-file is UNVERIFIED, so the route is GATED BLOCKED in this
- *     slice: buildL10Argv("release") throws MODEL_UNAVAILABLE until the
- *     gate is resolved (never ship an argv where -p swallows --model).
+ *   Release/Argon uses the metered Gemini HTTP route. No CLI argv is
+ *     defined for that slot; this builder must refuse it before spawn.
  *
  * argv[0] is the frozen resolved binary from getResolvedL10Binaries(). When
  * the route is disabled (the env var is unset / empty / whitespace /
@@ -144,7 +115,7 @@ export function historicalToRuntime(historical: string, slotId: string): string 
  * gates read the SAME frozen value, so a disabled route never reaches the
  * spawn boundary.
  */
-function resolveBinaryOrThrow(key: "claude" | "codex" | "grok", slotId: string): string {
+function resolveBinaryOrThrow(key: "claude" | "codex", slotId: string): string {
   const r = getResolvedL10Binaries()[key];
   if (r.status === "enabled") return r.path;
   throw new AdapterFailure(
@@ -196,15 +167,9 @@ export function buildL10Argv(opts: { slotId: string; cwd?: string; stdinPath?: s
     ];
   }
   if (slotId === "release") {
-    // Grok stdin gate (v3 §a L41): native precedence of empty `-p` versus
-    // `--prompt-file /dev/stdin` is UNVERIFIED, and `-p ""` is only a
-    // proposed wrapper-only bypass. Shipping an argv where `-p` can
-    // swallow `--model` is the exact hazard the design named. The route
-    // stays gated BLOCKED until the gate is resolved without an auth
-    // call (the security reviewer C5: "implement or gate, never ship this argv").
     throw new AdapterFailure(
       "MODEL_UNAVAILABLE",
-      "grok stdin gate unresolved (v3 §a L41): empty -p vs --prompt-file precedence UNVERIFIED; route gated BLOCKED",
+      "Argon uses the metered Gemini HTTP transport; no release CLI route is defined",
       null,
       false,
     );

@@ -4,7 +4,7 @@
  * Covers (per design v3 §a + the seam review notes 1 + 2):
  * - frozen map: config-sourced model rejected even when equal to a
  *   permitted literal; qwen3.8-max / empty / missing refused before
- *   spawn; Terra MODEL_UNAVAILABLE at callForSlot
+ *   spawn; provider-only slots eligible without inventing CLI argv
  * - stdin-only prompt: argv never contains the prompt text
  * - binary resolution (brief rev 2 item P): argv[0] is the configured
  *   synthetic absolute path under os.tmpdir(); unset / empty / relative
@@ -29,10 +29,13 @@ function main() {
     assertSlotEligibleForL10(slot);
   }
 
-  // MUTANT — Terra (sustainability) is BLOCKED.
-  assert.throws(() => assertSlotEligibleForL10("sustainability"), (e: unknown) => {
-    return e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE";
-  }, "sustainability slot must throw AdapterFailure(MODEL_UNAVAILABLE)");
+  // Provider-only slots are eligible through their frozen HTTP transports.
+  assertSlotEligibleForL10("sustainability");
+  assertSlotEligibleForL10("integration");
+  assert.equal(historicalToRuntime("gpt_5_6_terra", "sustainability"), "gpt-5.6-terra");
+  assert.equal(historicalToRuntime("gemini_3_8_flash", "integration"), "gemini-3.8-flash");
+  assert.equal(historicalToRuntime("gemini_4_argon", "release"), "gemini-4-argon");
+  assert.equal(historicalToRuntime("grok_4_7", "release"), null, "archived Forge cannot select the active release model");
 
   // MUTANT — unknown slot is refused.
   assert.throws(() => assertSlotEligibleForL10("not-a-slot"), (e: unknown) => {
@@ -85,12 +88,11 @@ function main() {
     assert.ok(!argvContinuity.includes("") || argvContinuity.indexOf("") === argvContinuity.indexOf("--tools") + 1,
       "the only empty-string argv element is the --tools value");
 
-    // MUTANT — Grok route is GATED: buildL10Argv("release") throws
-    // MODEL_UNAVAILABLE (the §a L41 stdin gate is unresolved; never ship an
-    // argv where -p swallows --model — the security reviewer C5).
+    // MUTANT — release uses Gemini HTTP, so no CLI argv is defined.
+    // MODEL_UNAVAILABLE keeps the HTTP-only slot away from CLI spawning.
     assert.throws(() => buildL10Argv({ slotId: "release", cwd: "/tmp", stdinPath: "/dev/stdin" }),
-      (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && /stdin gate/.test(e.message),
-      "release (Grok) must be gated until the stdin gate resolves");
+      (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && /Gemini HTTP/.test(e.message),
+      "release (Argon) must use its metered Gemini HTTP route");
 
     // CONTROL — historicalToRuntime honors its historical argument
     // (the security reviewer C5: the slice-1 version ignored it).
@@ -121,14 +123,13 @@ function main() {
     // CONTROL — stdin-only prompt: argv never contains the prompt.
     const prompt = "VERY-UNIQUE-PROMPT-MARKER-XYZ-12345";
     for (const slot of L10_LIVE_ELIGIBLE_SLOTS) {
-      if (slot === "release") continue; // gated (above) — no argv to inspect
+      if (slot === "release" || slot === "integration" || slot === "sustainability") continue; // no supported CLI argv
       const argv = buildL10Argv({ slotId: slot, cwd: "/tmp", stdinPath: "/dev/stdin" });
       assert.ok(!argv.some((a) => a.includes(prompt)),
         `${slot} argv must not contain the prompt (got argv=${JSON.stringify(argv)})`);
     }
 
-    // MUTANT — Terra (sustainability) is refused at the seam before any
-    // argv shape is produced.
+    // Provider-only Terra still has no CLI argv; HTTP eligibility does not invent one.
     assert.throws(() => buildL10Argv({ slotId: "sustainability", cwd: "/tmp", stdinPath: "/dev/stdin" }),
       (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE",
       "buildL10Argv for sustainability must throw AdapterFailure(MODEL_UNAVAILABLE)");
@@ -225,7 +226,7 @@ function main() {
         "unset/disabled env throws MODEL_UNAVAILABLE");
     }
 
-    console.log("PASS: frozen map (config-sourced model rejected, qwen3.8-max never appears, Terra MODEL_UNAVAILABLE), stdin-only prompt (argv never contains prompt), MCP config CONTROL/MUTANT poles x3, binary resolver unset/empty/whitespace/relative/missing/directory/symlink two-pole.");
+    console.log("PASS: frozen map (config-sourced model rejected, provider-only slots eligible, no invented CLI argv), stdin-only prompt, MCP config CONTROL/MUTANT poles x3, binary resolver two-pole.");
   } finally {
     _resetL10BinariesForTest();
     try { unlinkSync(fakeClaude); unlinkSync(fakeCodex); unlinkSync(fakeGrok); } catch {}

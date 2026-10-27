@@ -13,7 +13,47 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAdaptersConfig, resolveAdapterForSlot, resolveRuntimeModel } from "./index";
+import { loadAdaptersConfig, getDefaultAdapterForSlot, resolveAdapterForSlot, resolveRuntimeModel } from "./index";
+import { L10_FROZEN_LITERALS } from "./l10-routes";
+import { foundingCohort } from "../../shared/cohort";
+
+assert.equal(foundingCohort.length, 7);
+const release = foundingCohort.find(member => member.id === "release")!;
+assert.equal(release.name, "Argon");
+assert.equal(release.provider, "Google");
+assert.equal(release.model, "gemini_4_argon");
+assert.equal(foundingCohort.some(member => String(member.name) === "Forge"), false);
+assert.equal(foundingCohort.some(member => String(member.provider) === "xAI"), false);
+
+const priorAdapterOverride = process.env.AGENT_COMMONS_ADAPTER;
+delete process.env.AGENT_COMMONS_ADAPTER;
+assert.equal(getDefaultAdapterForSlot("governance"), "openai-responses");
+for (const id of ["continuity", "collaboration", "security"]) assert.equal(getDefaultAdapterForSlot(id), "anthropic-messages");
+assert.equal(getDefaultAdapterForSlot("release"), "google-gemini");
+assert.equal(L10_FROZEN_LITERALS.release, "gemini-4-argon");
+assert.equal(getDefaultAdapterForSlot("integration"), "google-gemini");
+assert.equal(getDefaultAdapterForSlot("sustainability"), "openai-responses");
+assert.equal(L10_FROZEN_LITERALS.integration, "gemini-3.8-flash");
+assert.equal(L10_FROZEN_LITERALS.sustainability, "gpt-5.6-terra");
+assert.equal(resolveAdapterForSlot("governance", null), "openai-responses");
+assert.equal(resolveRuntimeModel("governance", "historical", null), L10_FROZEN_LITERALS.governance);
+assert.equal(resolveRuntimeModel("governance", "historical", { version: 1, slots: { governance: { runtimeModel: "untrusted-alias" } } }), L10_FROZEN_LITERALS.governance);
+for (const id of ["continuity", "collaboration", "security", "release", "integration", "sustainability"] as const) {
+  const provider = getDefaultAdapterForSlot(id)!;
+  assert.equal(resolveAdapterForSlot(id, null), provider);
+  assert.equal(resolveRuntimeModel(id, "historical", null), L10_FROZEN_LITERALS[id]);
+  assert.equal(resolveRuntimeModel(id, "historical", { version: 1, slots: { [id]: { adapter: provider, runtimeModel: "untrusted-alias" } } }), L10_FROZEN_LITERALS[id]);
+  assert.equal(resolveRuntimeModel(id, "historical", { version: 1, defaultAdapter: "stub", slots: { [id]: { runtimeModel: "fixture-model" } } }), "fixture-model");
+  assert.equal(resolveAdapterForSlot(id, { version: 1, defaultAdapter: "stub" }), "stub");
+}
+process.env.AGENT_COMMONS_ADAPTER = "stub";
+assert.equal(resolveAdapterForSlot("governance", null), "stub");
+assert.equal(resolveRuntimeModel("governance", "historical", null), "historical");
+for (const id of ["continuity", "collaboration", "security", "release", "integration", "sustainability"]) {
+  assert.equal(resolveAdapterForSlot(id, null), "stub");
+  assert.equal(resolveRuntimeModel(id, "historical", null), "historical");
+}
+if (priorAdapterOverride === undefined) delete process.env.AGENT_COMMONS_ADAPTER; else process.env.AGENT_COMMONS_ADAPTER = priorAdapterOverride;
 
 function tempConfig(content: string | object): string {
   const dir = mkdtempSync(join(tmpdir(), "adapters-cfg-"));

@@ -35,6 +35,8 @@ function start(home: string, ids: string[]) {
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   delete env.NODE_TEST_CONTEXT;
+  env.AGENT_COMMONS_APP_DIR = root;
+  env.AGENT_COMMONS_DATA_DIR = home;
   env.L30_DB_HOME = home;
   env.L30_IDS = JSON.stringify(ids);
   env.L30_NETWORK_MODULE = pathToFileURL(join(here, "network.ts")).href;
@@ -77,9 +79,13 @@ test("legacy console keys stay foundation, new keys mint agentnet, and both surv
     const stored = after.prepare("SELECT id, uuaid_namespace FROM agent_keys ORDER BY id").all();
     after.close();
     assert.deepEqual(stored.map((row) => [row.id, row.uuaid_namespace]), [
+      ["atlas", "agentnet"],
       ["fresh", "agentnet"],
       ["late", "foundation"],
       ["legacy", "foundation"],
+      ["lyra", "agentnet"],
+      ["orion", "agentnet"],
+      ["sentinel", "agentnet"],
     ]);
 
     const second = boot(home, ["legacy", "fresh", "late"]);
@@ -107,7 +113,7 @@ test("a console key recorded outside the self-certifying set fails closed instea
     for (const id of ["registry", "blank"]) {
       const child = start(home, [id]);
       assert.notEqual(child.status, 0, `${id} became an id: ${child.stdout}`);
-      assert.match(child.stderr, new RegExp(`Console key ${id} has no self-certifying UUAID namespace`));
+      assert.match(child.stderr, /Console public key has no self-certifying UUAID namespace/);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -203,7 +209,17 @@ test("server mint sites take the namespace from the key record, never from a lit
   assert.ok(files.includes(join(here, "network.ts")), "the guard is not reading server/");
   assert.ok(files.some((f) => f.startsWith(join(root, "shared") + "/")), "the guard is not reading shared/");
   assert.ok(files.some((f) => f.startsWith(join(root, "client", "src") + "/") && f.endsWith(".tsx")), "the guard is not reading client/src");
-  assert.match(readFileSync(join(here, "network.ts"), "utf8"), /uuaid:\$\{keys\.uuaidNamespace\}:agent:/);
+  const networkSource = readFileSync(join(here, "network.ts"), "utf8");
+  const helper = networkSource.match(/function publicIdentityFromPem\(pem: string, uuaidNamespace: string\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(helper, "public identity helper requires an explicit namespace without a default");
+  assert.match(helper, /uuaid:\$\{uuaidNamespace\}:agent:/);
+  assert.match(helper, /if \(!SELF_CERTIFYING_NAMESPACES\.includes\(uuaidNamespace\)\)\s*throw new Error\("Console public key has no self-certifying UUAID namespace"\)/);
+  for (const [method, lookup] of [["identity", "key"], ["publicIdentity", "existingPublicIdentity"]]) {
+    const body = networkSource.match(new RegExp(`\\n  ${method}\\(id: string\\) \\{([\\s\\S]*?)\\n  \\}`))?.[1];
+    assert.ok(body, `${method} is covered by the namespace guard`);
+    assert.match(body, new RegExp(`const keys = storage\\.${lookup}\\(id\\);`));
+    assert.match(body, /publicIdentityFromPem\(keys\.publicKey, keys\.uuaidNamespace\)/);
+  }
   assert.match(readFileSync(join(here, "storage.ts"), "utf8"), /uuaidNamespace: mintNamespace\(RUNTIME_UUAID_NAMESPACE\)/);
   // The server mints with node:crypto, not Keychain.generate. Every file that
   // generates a console key must also stamp the namespace on the row.

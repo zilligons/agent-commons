@@ -7,8 +7,27 @@
 import assert from "node:assert/strict";
 import { AdapterFailure } from "./types";
 
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("R7_TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before the first cohort/application import,
+// including when node --test was launched without the external preload.
+await import("../offline-test-home.mjs");
+
 async function main() {
   const { cohortConsole } = await import("../cohort");
+  const { DatabaseSync } = await import("node:sqlite");
+  const { L10AccountingService } = await import("./l10-accounting");
+  const { L10AccountingStore } = await import("./l10-accounting-store");
+  const { createFixtureSpendingPolicy } = await import("./fixture-spending");
+  const fixtureDb = new DatabaseSync(":memory:");
+  const originalAccounting = Object.getOwnPropertyDescriptor(cohortConsole, "injectedAccounting");
+  // Fixture-only accounting; usage/admission assertions below remain unchanged.
+  Object.defineProperty(cohortConsole, "injectedAccounting", { configurable: true, writable: true,
+    value: new L10AccountingService(new L10AccountingStore(fixtureDb), { spending: createFixtureSpendingPolicy() }) });
+  try {
+  const generation = cohortConsole.generation;
   const c = cohortConsole as unknown as {
     recordAdapter: (agent: string, model: string, error?: unknown, historicalModel?: string, liveExtras?: unknown) => void;
     state: { adapterDiagnostics: Record<string, Record<string, unknown>>; statuses: Record<string, string> };
@@ -88,8 +107,9 @@ async function main() {
   const continuity = foundingCohort.find((m) => m.id === "continuity")!;
 
   // CONTROL — default/offline returns discriminated result { kind: "offline", text: ... }
+  process.env.AGENT_COMMONS_ADAPTER = "preview-bridge";
   (cohortConsole as any).call = async () => "MOCK_RESULT";
-  const defaultRes = await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+  const defaultRes = await (cohortConsole as any).callForSlot(continuity, "test", generation, 1000);
   assert.equal(typeof defaultRes, "object", "callForSlot returns discriminated result object");
   assert.equal(defaultRes.kind, "offline", "default/offline call returns kind: 'offline'");
   assert.equal(defaultRes.text, "MOCK_RESULT", "text matches stubbed call");
@@ -99,7 +119,7 @@ async function main() {
   process.env.AGENT_COMMONS_ADAPTER = "invalid-offline-fixture-adapter";
   let threw = false;
   try {
-    await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+    await (cohortConsole as any).callForSlot(continuity, "test", generation, 1000);
   } catch {
     threw = true;
   } finally {
@@ -114,8 +134,26 @@ async function main() {
   assert.ok(/USAGE_WALL.{0,200}terminal/.test(src) || /terminal.{0,200}USAGE_WALL/.test(src), "terminal semantics documented at the latch");
 
   // R7 (rework 6): callForSlot seam verification with totalTokens mutants
-  const { StubAdapter } = await import("./stub");
-  const origStubCall = StubAdapter.prototype.call;
+  const { L10CliAdapter } = await import("./l10-cohort");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const originalCwd = process.cwd();
+  const scratch = mkdtempSync(join(tmpdir(), "l10-r7-seam-"));
+  writeFileSync(join(scratch, "agent-commons.adapters.json"), JSON.stringify({ version: 1, slots: {
+    continuity: { adapter: "l10-cli", runtimeModel: "claude-fable-5-1" },
+  } }));
+  process.chdir(scratch);
+  const originalAppDir = process.env.AGENT_COMMONS_APP_DIR;
+  process.env.AGENT_COMMONS_APP_DIR = scratch;
+  const originalOffline = process.env.AGENT_COMMONS_OFFLINE;
+  delete process.env.AGENT_COMMONS_OFFLINE;
+  const origStubCall = L10CliAdapter.prototype.call;
+  const originalMetering = Object.getOwnPropertyDescriptor(L10CliAdapter.prototype, "metering");
+  Object.defineProperty(L10CliAdapter.prototype, "metering", { configurable: true, value: {
+    version: 1, coversInternalCalls: true,
+    bounds: () => ({ promptTokensUpper: 10, totalTokensUpper: 1810 }),
+  } });
   const validSeamResult = {
     kind: "live",
     text: "OFFLINE_FIXTURE",
@@ -124,52 +162,70 @@ async function main() {
     usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, coversInternalCalls: true, source: "cli-envelope", fieldPath: "usage" },
     metrics,
   };
-  process.env.AGENT_COMMONS_ADAPTER = "stub";
+  const { markAccountingDispatchStarted } = await import("./l10-admission");
+  const fixtureCall = (result: unknown) => async (request: any) => {
+    markAccountingDispatchStarted(request.accountingPermit);
+    return result as any;
+  };
+  process.env.AGENT_COMMONS_ADAPTER = "l10-cli";
   try {
     // CONTROL — 10 + 5 = 15 succeeds
-    StubAdapter.prototype.call = async () => ({ ...validSeamResult }) as any;
-    const seamOk = await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+    L10CliAdapter.prototype.call = fixtureCall({ ...validSeamResult });
+    const seamOk = await (cohortConsole as any).callForSlot(continuity, "test", ++cohortConsole.generation, 1000);
     assert.equal(seamOk.kind, "live");
     assert.equal(seamOk.usage.totalTokens, 15);
 
     // MUTANTS — -1, NaN, Infinity, 1.5, 14 vs 10+5 all refuse and clear extras
     for (const badTotal of [-1, NaN, Infinity, 1.5, 14]) {
-      StubAdapter.prototype.call = async () => ({
+      L10CliAdapter.prototype.call = fixtureCall({
         ...validSeamResult,
         usage: { ...validSeamResult.usage, totalTokens: badTotal },
-      }) as any;
+      });
       await assert.rejects(async () => {
-        await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+        await (cohortConsole as any).callForSlot(continuity, "test", ++cohortConsole.generation, 1000);
       }, (err: any) => err.code === "USAGE_INVALID", `totalTokens ${badTotal} must refuse with USAGE_INVALID`);
       assert.equal((cohortConsole as any)._lastLiveExtras["continuity"], undefined, `extras must be cleared for bad total ${badTotal}`);
     }
 
     // R7 rework 7: coverage true/false pair in callForSlot
     // CONTROL: coversInternalCalls: true -> live usage retained, extras stored
-    StubAdapter.prototype.call = async () => ({
+    L10CliAdapter.prototype.call = fixtureCall({
       ...validSeamResult,
       usage: { ...validSeamResult.usage, coversInternalCalls: true },
-    }) as any;
-    const seamTrue = await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+    });
+    const seamTrue = await (cohortConsole as any).callForSlot(continuity, "test", ++cohortConsole.generation, 1000);
     assert.equal(seamTrue.kind, "live");
     assert.equal(seamTrue.usage.coversInternalCalls, true);
     assert.ok((cohortConsole as any)._lastLiveExtras["continuity"]);
 
     // MUTANT: coversInternalCalls: false -> USAGE_INVALID throw, no stored aggregate
-    StubAdapter.prototype.call = async () => ({
+    L10CliAdapter.prototype.call = fixtureCall({
       ...validSeamResult,
       usage: { ...validSeamResult.usage, coversInternalCalls: false },
-    }) as any;
+    });
     await assert.rejects(async () => {
-      await (cohortConsole as any).callForSlot(continuity, "test", 1, 1000);
+      await (cohortConsole as any).callForSlot(continuity, "test", ++cohortConsole.generation, 1000);
     }, (err: any) => err.code === "USAGE_INVALID", "coversInternalCalls=false must refuse with USAGE_INVALID");
     assert.equal((cohortConsole as any)._lastLiveExtras["continuity"], undefined, "no aggregate stored when coverage is incomplete");
   } finally {
-    StubAdapter.prototype.call = origStubCall;
+    L10CliAdapter.prototype.call = origStubCall;
     delete process.env.AGENT_COMMONS_ADAPTER;
+    if (originalMetering) Object.defineProperty(L10CliAdapter.prototype, "metering", originalMetering);
+    else delete (L10CliAdapter.prototype as any).metering;
+    if (originalOffline === undefined) delete process.env.AGENT_COMMONS_OFFLINE;
+    else process.env.AGENT_COMMONS_OFFLINE = originalOffline;
+    if (originalAppDir === undefined) delete process.env.AGENT_COMMONS_APP_DIR;
+    else process.env.AGENT_COMMONS_APP_DIR = originalAppDir;
+    process.chdir(originalCwd);
+    rmSync(scratch, { recursive: true, force: true });
   }
 
   console.log("PASS R7: actualModel always recorded (equal case), usage validation (safe integer counts, coverage evidence, complete internal-call coverage, total consistency in recordAdapter and callForSlot), stale extras cleared, USAGE_WALL/AUTH_BLOCKED terminal latch in skip list.");
+  } finally {
+    if (originalAccounting) Object.defineProperty(cohortConsole, "injectedAccounting", originalAccounting);
+    else Reflect.deleteProperty(cohortConsole, "injectedAccounting");
+    fixtureDb.close();
+  }
 }
 
 main().catch((e) => { console.error("FAIL:", e); process.exit(1); });

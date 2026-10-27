@@ -8,8 +8,8 @@ import { storage } from "./storage";
 import { AdapterFailure } from "./adapters";
 import { buildChildEnv, assertSpawnTripwire } from "./adapters/l10-env";
 import { PYTHON_ABS } from "./adapters/l10-process";
-import { isBlockedSlotOrModel } from "./adapters/l10-routes";
 import { assertLiveAccountingGate } from "./adapters/l10-limits";
+import { assertAccountingPermit } from "./adapters/l10-admission";
 
 const roster = [
   {
@@ -103,16 +103,6 @@ export function modelCall(
   proposalId: string | null,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    // R3: direct legacy entry must enforce eligibility policy before transport selection or spawn.
-    if (isBlockedSlotOrModel(agent.id) || isBlockedSlotOrModel(agent.model)) {
-      reject(new AdapterFailure(
-        "MODEL_UNAVAILABLE",
-        `slot or model ${agent.id || agent.model} is blocked; L10 does not dispatch it (zero-dispatch gate)`,
-        null,
-        false,
-      ));
-      return;
-    }
     // R3 (rework 3): engine model bridge is a live path; offline blocks it.
     if (process.env.AGENT_COMMONS_OFFLINE === "1") {
       reject(new Error("MODEL_UNAVAILABLE: engine model bridge is a live path; AGENT_COMMONS_OFFLINE=1 blocks it"));
@@ -120,6 +110,7 @@ export function modelCall(
     }
     // R8 (rework 6): non-bypassable accounting deferral gate at engine entry
     try {
+      assertAccountingPermit(undefined);
       assertLiveAccountingGate();
     } catch (e) {
       reject(e);

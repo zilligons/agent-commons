@@ -16,12 +16,20 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { witnessFromOffset, normalizeCliEnvelope } from "./l10-witness";
-import { assertValidModelLiteral, CLAUDE_ALLOWED_MODELS, buildL10Argv } from "./l10-routes";
-import { buildChildEnv, EnvRefusedError } from "./l10-env";
-import { AdapterFailure } from "./types";
-import { _setL10BinariesForTest, _resetL10BinariesForTest, resolveL10Binaries } from "./config";
-import {
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("../offline-test-home.mjs");
+
+const { witnessFromOffset, normalizeCliEnvelope } = await import("./l10-witness");
+const { assertValidModelLiteral, CLAUDE_ALLOWED_MODELS, buildL10Argv } = await import("./l10-routes");
+const { buildChildEnv, EnvRefusedError } = await import("./l10-env");
+const { AdapterFailure } = await import("./types");
+const { _setL10BinariesForTest, _resetL10BinariesForTest, resolveL10Binaries } = await import("./config");
+const {
   spawnClaudeL10Child,
   spawnClaudeL10ChildForTest,
   spawnCodexL10Child,
@@ -31,9 +39,9 @@ import {
   assertConfigGate,
   L10PermitPool,
   isSharedClaudePermitDir,
-} from "./l10-process";
-import { PreviewBridgeAdapter } from "./preview_bridge";
-import { callForSlot } from "../cohort";
+} = await import("./l10-process");
+const { PreviewBridgeAdapter } = await import("./preview_bridge");
+const { callForSlot } = await import("../cohort");
 
 function assertNoSurvivingProcessesForDir(targetDir: string): void {
   const resolvedDir = resolve(targetDir);

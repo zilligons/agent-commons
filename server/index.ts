@@ -26,7 +26,11 @@
  */
 import { scrubAndProve, buildClosedConsoleEnv } from "./bootstrap";
 import { applyDotenvGuarded } from "./dotenv-guard";
+import { captureProviderCredentials } from "./adapters/provider_credentials";
 
+// HTTP adapters retain a private startup snapshot; the general scrub still
+// removes every scoped key from process.env before application or CLI use.
+captureProviderCredentials(process.env);
 const survivors = scrubAndProve();
 if (survivors !== null) {
   // Static, safe message: NAMES only, never values (v3 §c L73).

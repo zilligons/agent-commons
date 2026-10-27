@@ -1,17 +1,25 @@
 // L3 Slice 2 v6 §3 / §8: Property 6 Console Verification, Cleanup & Isolation Test Suite
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import { NetworkConsole } from "./network";
-import { verifyDocument, createProfile, encode, digest } from "../packages/agent-commons/src/profiles.mjs";
-import { storage } from "./storage";
-import {
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("./offline-test-home.mjs");
+
+const { DatabaseSync } = await import("node:sqlite");
+const { NetworkConsole } = await import("./network");
+const { verifyDocument, createProfile, encode, digest } = await import("../packages/agent-commons/src/profiles.mjs");
+const { storage } = await import("./storage");
+const {
   AgentCommons,
   CommonsStore,
   Keychain,
   MemoryLoopbackTransport,
-} from "../packages/agent-commons/src/index.mjs";
-import { seal } from "../packages/agent-commons/src/pillar.mjs";
+} = await import("../packages/agent-commons/src/index.mjs");
+const { seal } = await import("../packages/agent-commons/src/pillar.mjs");
 
 test("Baseline console behavior: profile persistence, fixture gate, global-scope rejection, contribution", () => {
   const saved = storage.loadNetwork();

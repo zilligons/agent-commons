@@ -13,7 +13,8 @@
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { syncBuiltinESMExports } from "node:module";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AdapterFailure, type AdapterRequest } from "./types";
 import { L10CliAdapter, callL10CliForTest } from "./l10-cohort";
@@ -41,6 +42,14 @@ function makeReq(overrides: Partial<AdapterRequest> = {}): AdapterRequest {
 
 async function main() {
   const root = mkdtempSync(join(tmpdir(), "l10-cohort-test-"));
+  mkdirSync(join(root, ".claude"), { mode: 0o700 });
+  writeFileSync(join(root, ".claude", "settings.json"), "{}\n");
+  mkdirSync(join(root, ".codex"), { mode: 0o700 });
+  writeFileSync(join(root, ".codex", "config.toml"), "# test fixture\n");
+  // The production builder derives CONTROL HOME from userInfo, not $HOME.
+  const originalUserInfo = os.userInfo;
+  os.userInfo = (() => ({ ...originalUserInfo(), homedir: root })) as typeof os.userInfo;
+  syncBuiltinESMExports();
 
   // Brief rev 2 P: install a snapshot pointing at synthetic absolute paths
   // under tmpdir. The test entry uses fixtureBin / fixtureLedgerPath which
@@ -512,6 +521,8 @@ exit 0
       console.log("PASS: l10-cohort R2: Claude live route is ENABLED only when CLI binary + ledger + witness seats all resolve; witness fails closed (R2 + R3).");
     }
   } finally {
+    os.userInfo = originalUserInfo;
+    syncBuiltinESMExports();
     _resetL10BinariesForTest();
     try { rmSync(root, { recursive: true, force: true }); } catch {}
   }

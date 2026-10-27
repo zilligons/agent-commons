@@ -13,8 +13,8 @@
 import assert from "node:assert/strict";
 import cp, { spawn, execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, rmSync, existsSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, rmSync, existsSync, realpathSync, renameSync } from "node:fs";
+import os, { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { L10PermitPool, L10_CLAUDE_MAX_CONCURRENT, spawnClaudeL10Child, spawnClaudeL10ChildForTest, isSafeToKillGroup, getRunnerPgid, teardownProcessTree, PYTHON_ABS } from "./l10-process";
@@ -42,6 +42,32 @@ _setL10BinariesForTest(resolveL10Binaries({
 } as NodeJS.ProcessEnv));
 
 const fullClaudeArgs = buildL10Argv({ slotId: "continuity" }).slice(1);
+
+function publishFixtureFile(path: string, content: string): void {
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, content);
+  renameSync(temporary, path);
+}
+
+function parseFixturePid(raw: string): number | null {
+  const text = raw.trim();
+  if (!/^[1-9][0-9]*$/.test(text)) return null;
+  const pid = Number(text);
+  return Number.isSafeInteger(pid) ? pid : null;
+}
+
+function readFixturePid(path: string): number | null {
+  try { return parseFixturePid(readFileSync(path, "utf8")); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+// Generate atomic Python handoffs without changing the production modules.
+function pythonPublish(path: string, value: string, indent = ""): string {
+  return `${indent}with open(${JSON.stringify(path + ".tmp")}, "w") as f: f.write(${value})\n${indent}os.replace(${JSON.stringify(path + ".tmp")}, ${JSON.stringify(path)})`;
+}
 
 function makeClaudeFixture(targetDir: string, nameOrContent: string, maybeContent?: string): string {
   const content = maybeContent !== undefined ? maybeContent : nameOrContent;
@@ -98,6 +124,13 @@ function assertNoSurvivingProcessesForDir(targetDir: string, recordedSpawnedPids
 
 async function main() {
   const dir = mkdtempSync(join(tmpdir(), "l10-r4-"));
+  assert.ok(PYTHON_ABS, "absolute Python interpreter must resolve for fixtures");
+  mkdirSync(join(dir, ".claude"), { mode: 0o700 });
+  writeFileSync(join(dir, ".claude", "settings.json"), "{}\n");
+  // The production builder derives CONTROL HOME from userInfo, not $HOME.
+  const originalUserInfo = os.userInfo;
+  os.userInfo = (() => ({ ...originalUserInfo(), homedir: dir })) as typeof os.userInfo;
+  syncBuiltinESMExports();
   try {
     const pool = new L10PermitPool(dir, L10_CLAUDE_MAX_CONCURRENT);
 
@@ -204,7 +237,8 @@ async function main() {
     mkdirSync(fastEnvDir, { recursive: true, mode: 0o700 });
     const childEnv = buildChildEnv({ route: "claude", runId: "fast", home: dir, runDir: fastEnvDir });
     const pidFile = join(dir, "fast-descendant.pid");
-    const pyBin = PYTHON_ABS ?? "/usr/local/bin/python";
+    const fastExitFile = join(dir, "fast-parent-exit");
+    const pyBin = PYTHON_ABS;
     const fixture = makeClaudeFixture(dir, `#!${pyBin}\nimport os, time, sys
 deadline = time.time() + 20
 pid = os.fork()
@@ -212,29 +246,41 @@ if pid == 0:
   os.setsid()
   null = os.open("/dev/null", os.O_RDWR)
   for fd in [0,1,2]: os.dup2(null, fd)
-  with open(${JSON.stringify(pidFile)}, "w") as f: f.write(str(os.getpid()))
+${pythonPublish(pidFile, "str(os.getpid())", "  ")}
   while time.time() < deadline:
     time.sleep(0.5)
   sys.exit(0)
 else:
-  while not os.path.exists(${JSON.stringify(pidFile)}):
+  while not os.path.exists(${JSON.stringify(fastExitFile)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(.001)
-  time.sleep(.05)
   os._exit(0)
 `);
     const fastPool = new L10PermitPool(join(dir, "fast-permits"), 1);
-    await spawnClaudeL10ChildForTest({
-      argv: [fixture, ...fullClaudeArgs],
-      cwd: dir,
-      childEnv,
-      promptText: "",
-      timeoutMs: 1500,
-      cancelSignal: { cancelled: () => false },
-      runId: "fast-descendant",
-      permitPool: fastPool,
-    });
-    const descendantPid = Number(readFileSync(pidFile, "utf8"));
+    let fastSnapshots = 0;
+    try {
+      await spawnClaudeL10ChildForTest({
+        argv: [fixture, ...fullClaudeArgs],
+        cwd: dir,
+        childEnv,
+        promptText: "",
+        timeoutMs: 1500,
+        cancelSignal: { cancelled: () => false },
+        runId: "fast-descendant",
+        permitPool: fastPool,
+        onSnapshot: (phase, seen) => {
+          const observedPid = readFixturePid(pidFile);
+          if (phase === "poller" && observedPid !== null && seen.has(observedPid)) {
+            if (++fastSnapshots >= 2) publishFixtureFile(fastExitFile, "go");
+          }
+        },
+      });
+    } finally {
+      publishFixtureFile(fastExitFile, "go");
+    }
+    assert.ok(fastSnapshots >= 2, "Fast parent exits only after two ancestry snapshots observe its descendant");
+    const descendantPid = readFixturePid(pidFile);
+    assert.ok(descendantPid !== null, "Fast descendant PID must be a positive safe integer");
     let descState = "ABSENT";
     try {
       descState = execFileSync("/bin/ps", ["-p", String(descendantPid), "-o", "state="], { encoding: "utf8" }).trim();
@@ -248,8 +294,9 @@ else:
     mkdirSync(noTmpDir, { recursive: true, mode: 0o700 });
     const noTmpEnv = buildChildEnv({ route: "claude", runId: "notmp", home: dir, runDir: noTmpDir });
     const noTmpPidFile = join(dir, "notmp-descendant.pid");
+    const noTmpExitFile = join(dir, "notmp-parent-exit");
     const noTmpBody = join(dir, "notmp-body.py");
-    writeFileSync(noTmpBody, `import os, time, sys\ndeadline = time.time() + 20\nwith open(${JSON.stringify(noTmpPidFile)}, "w") as f: f.write(str(os.getpid()))\nwhile time.time() < deadline: time.sleep(0.5)\nsys.exit(0)\n`);
+    writeFileSync(noTmpBody, `import os, time, sys\ndeadline = time.time() + 20\n${pythonPublish(noTmpPidFile, "str(os.getpid())")}\nwhile time.time() < deadline: time.sleep(0.5)\nsys.exit(0)\n`);
     const noTmpFixture = makeClaudeFixture(dir, `#!${pyBin}\nimport os, time, sys
 deadline = time.time() + 20
 pid = os.fork()
@@ -261,23 +308,36 @@ if pid == 0:
   e.pop("TMPDIR", None)
   os.execve(sys.executable, [sys.executable, ${JSON.stringify(noTmpBody)}], e)
 else:
-  while not os.path.exists(${JSON.stringify(noTmpPidFile)}):
+  while not os.path.exists(${JSON.stringify(noTmpExitFile)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(.001)
   os._exit(0)
 `);
     const noTmpPool = new L10PermitPool(join(dir, "notmp-permits"), 1);
-    await spawnClaudeL10ChildForTest({
-      argv: [noTmpFixture, ...fullClaudeArgs],
-      cwd: process.cwd(),
-      childEnv: noTmpEnv,
-      promptText: "",
-      timeoutMs: 1500,
-      cancelSignal: { cancelled: () => false },
-      runId: "notmp-descendant",
-      permitPool: noTmpPool,
-    });
-    const noTmpDescPid = Number(readFileSync(noTmpPidFile, "utf8"));
+    let noTmpSnapshots = 0;
+    try {
+      await spawnClaudeL10ChildForTest({
+        argv: [noTmpFixture, ...fullClaudeArgs],
+        cwd: process.cwd(),
+        childEnv: noTmpEnv,
+        promptText: "",
+        timeoutMs: 1500,
+        cancelSignal: { cancelled: () => false },
+        runId: "notmp-descendant",
+        permitPool: noTmpPool,
+        onSnapshot: (phase, seen) => {
+          const observedPid = readFixturePid(noTmpPidFile);
+          if (phase === "poller" && observedPid !== null && seen.has(observedPid)) {
+            if (++noTmpSnapshots >= 2) publishFixtureFile(noTmpExitFile, "go");
+          }
+        },
+      });
+    } finally {
+      publishFixtureFile(noTmpExitFile, "go");
+    }
+    assert.ok(noTmpSnapshots >= 2, "No-TMPDIR parent exits only after two ancestry snapshots observe its descendant");
+    const noTmpDescPid = readFixturePid(noTmpPidFile);
+    assert.ok(noTmpDescPid !== null, "No-TMPDIR descendant PID must be a positive safe integer");
     let noTmpDescState = "ABSENT";
     try {
       noTmpDescState = execFileSync("/bin/ps", ["-p", String(noTmpDescPid), "-o", "state="], { encoding: "utf8" }).trim();
@@ -424,7 +484,7 @@ if os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL:
 else:
     print("ALIVE")
 `);
-      const mutantOut = execFileSync("/usr/local/bin/python", [mutantScratch], { encoding: "utf8" }).trim();
+      const mutantOut = execFileSync(PYTHON_ABS, [mutantScratch], { encoding: "utf8" }).trim();
       assert.equal(mutantOut, "DEAD", "R4 rework 7b MUTANT: unguarded group kill destroys sibling in same group");
     } finally {
       try { process.kill(sibling.pid!, "SIGKILL"); } catch {}
@@ -613,7 +673,7 @@ worker = os.fork()
 if worker == 0:
     null = os.open("/dev/null", os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    open(${JSON.stringify(readyFile)}, "w").close()
+${pythonPublish(readyFile, "str(os.getpid())", "    ")}
     while not os.path.exists(${JSON.stringify(goFile)}):
         if time.time() >= deadline: sys.exit(1)
         time.sleep(0.001)
@@ -622,15 +682,16 @@ if worker == 0:
         os.setpgid(0, 0)
         null = os.open("/dev/null", os.O_RDWR)
         for fd in [0, 1, 2]: os.dup2(null, fd)
-        with open(${JSON.stringify(gcPidFile)}, "w") as f:
+        with open(${JSON.stringify(gcPidFile + ".tmp")}, "w") as f:
             f.write(str(os.getpid()))
+        os.replace(${JSON.stringify(gcPidFile + ".tmp")}, ${JSON.stringify(gcPidFile)})
         while time.time() < deadline:
             time.sleep(0.5)
         sys.exit(0)
     while not os.path.exists(${JSON.stringify(gcPidFile)}):
         if time.time() >= deadline: sys.exit(1)
         time.sleep(0.001)
-    open(${JSON.stringify(workerDoneFile)}, "w").close()
+${pythonPublish(workerDoneFile, '""', "    ")}
     while time.time() < deadline:
         time.sleep(0.5)
     sys.exit(0)
@@ -644,43 +705,37 @@ os._exit(0)
         let seenInPoller = false;
         let seenInExit = false;
         let observedGcPid = 0;
-        let samples = 0;
+        let workerSnapshots = 0;
         let parentExitedInGap = false;
-        const originalExecFileSync = cp.execFileSync;
-
-        cp.execFileSync = function (file: any, args: any, options: any) {
-          const actual = (originalExecFileSync as any)(file, args, options);
-          if (file === "/bin/ps" && args?.[0] === "-axo" && args?.[1]?.includes("sess")) {
-            samples++;
-            if (samples === 2) {
-              const start = Date.now();
-              while (!existsSync(readyFile) && Date.now() - start < 5000) {
-                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-              }
-              writeFileSync(goFile, "go");
-              const pidStart = Date.now();
-              while (Date.now() - pidStart < 5000) {
-                if (existsSync(gcPidFile)) {
-                  const raw = readFileSync(gcPidFile, "utf8").trim();
-                  const p = parseInt(raw, 10);
-                  if (p > 0) {
-                    observedGcPid = p;
-                    break;
-                  }
-                }
-                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-              }
-              while (!existsSync(workerDoneFile) && Date.now() - start < 5000) {
-                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-              }
-              parentExitedInGap = true;
-            }
-          }
-          return actual;
-        } as any;
-        syncBuiltinESMExports();
-
+        let pauseNextImmediate = false;
+        let schedulerPauseCaptured = false;
+        let heldImmediateCallback: (() => void) | null = null;
+        const originalSpawn = cp.spawn;
+        const originalSetImmediate = globalThis.setImmediate;
         const parentClaudeFixture = makeClaudeFixture(poleDir, "claude-parent", `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`);
+
+        cp.spawn = function (command: any, ...args: any[]) {
+          const child = (originalSpawn as any)(command, ...args);
+          if (command === parentClaudeFixture) {
+            child.once("exit", () => {
+              parentExitedInGap = true;
+              observedGcPid = readFixturePid(gcPidFile) ?? 0;
+            });
+          }
+          return child;
+        } as typeof cp.spawn;
+        globalThis.setImmediate = function (callback: (...args: any[]) => void, ...args: any[]) {
+          if (pauseNextImmediate) {
+            pauseNextImmediate = false;
+            schedulerPauseCaptured = true;
+            heldImmediateCallback = () => callback(...args);
+            const handle = originalSetImmediate(() => {});
+            clearImmediate(handle);
+            return handle;
+          }
+          return originalSetImmediate(callback, ...args);
+        } as typeof setImmediate;
+        syncBuiltinESMExports();
 
         try {
           const res = await spawnClaudeL10ChildForTest({
@@ -695,25 +750,38 @@ os._exit(0)
             permitPool: pool,
             skipExitSnapshot: opts.skipExitSnapshot,
             onSnapshot: (phase, seen) => {
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (observedGcPid !== 0 && seen.has(observedGcPid)) {
                 if (phase === "poller") seenInPoller = true;
                 if (phase === "exit") seenInExit = true;
               }
+              if (phase === "poller" && !schedulerPauseCaptured) {
+                const workerPid = readFixturePid(readyFile);
+                if (workerPid !== null && seen.has(workerPid) && ++workerSnapshots === 2) {
+                  // The production poller calls setImmediate directly after this hook.
+                  pauseNextImmediate = true;
+                  publishFixtureFile(goFile, "go");
+                }
+              }
             },
           });
-          return { res, pool, observedGcPid, seenInPoller, seenInExit, parentExitedInGap };
+          return { res, pool, observedGcPid, seenInPoller, seenInExit, parentExitedInGap, workerSnapshots, schedulerPauseCaptured };
         } finally {
-          try { writeFileSync(goFile, "go"); } catch {}
-          try { writeFileSync(workerDoneFile, "done"); } catch {}
-          cp.execFileSync = originalExecFileSync;
+          try { publishFixtureFile(goFile, "go"); } catch {}
+          try { publishFixtureFile(workerDoneFile, "done"); } catch {}
+          cp.spawn = originalSpawn;
+          globalThis.setImmediate = originalSetImmediate;
           syncBuiltinESMExports();
+          if (heldImmediateCallback) originalSetImmediate(heldImmediateCallback);
         }
       };
 
       // CONTROL: exit snapshot enabled
       const ctrl = await runExitSnapPole({ skipExitSnapshot: false, runName: "r4b-exit-snap-ctrl" });
       assert.ok(ctrl.observedGcPid > 0, "R4b Condition 3(i) CONTROL: grandchild spawned");
-      assert.equal(ctrl.parentExitedInGap, true, "R4b Condition 3(i) CONTROL: parent exited before second sample");
+      assert.ok(ctrl.workerSnapshots >= 2, "R4b Condition 3(i) CONTROL: two real snapshots observed the ready worker");
+      assert.equal(ctrl.schedulerPauseCaptured, true, "R4b Condition 3(i) CONTROL: live poller scheduler paused");
+      assert.equal(ctrl.parentExitedInGap, true, "R4b Condition 3(i) CONTROL: native parent exit observed while live poller paused");
       assert.equal(ctrl.seenInPoller, false, "R4b Condition 3(i) CONTROL: grandchild NOT seen in live poller");
       assert.equal(ctrl.seenInExit, true, "R4b Condition 3(i) CONTROL: grandchild first seen in exit snapshot");
       const gcDead = await waitForExit(ctrl.observedGcPid, 1500);
@@ -726,7 +794,9 @@ os._exit(0)
       const mutant = await runExitSnapPole({ skipExitSnapshot: true, runName: "r4b-exit-snap-mutant" });
       try {
         assert.ok(mutant.observedGcPid > 0, "R4b Condition 3(i) MUTANT: grandchild spawned");
-        assert.equal(mutant.parentExitedInGap, true, "R4b Condition 3(i) MUTANT: parent exited before second sample");
+        assert.ok(mutant.workerSnapshots >= 2, "R4b Condition 3(i) MUTANT: two real snapshots observed the ready worker");
+        assert.equal(mutant.schedulerPauseCaptured, true, "R4b Condition 3(i) MUTANT: live poller scheduler paused");
+        assert.equal(mutant.parentExitedInGap, true, "R4b Condition 3(i) MUTANT: native parent exit observed while live poller paused");
         assert.equal(mutant.seenInPoller, false, "R4b Condition 3(i) MUTANT: grandchild NOT seen in live poller");
         assert.equal(mutant.seenInExit, false, "R4b Condition 3(i) MUTANT: exit snapshot was skipped");
         const mutantDead = await waitForExit(mutant.observedGcPid, 1500);
@@ -749,10 +819,10 @@ os._exit(0)
       const body = join(gapDir, "body.py");
       const parent = join(gapDir, "parent.py");
 
-      writeFileSync(body, `import os, time, sys\ndeadline = time.time() + 20\nwith open(${JSON.stringify(pidFile)}, "w") as f: f.write(str(os.getpid()))\nwhile time.time() < deadline: time.sleep(0.5)\nsys.exit(0)\n`);
+      writeFileSync(body, `import os, time, sys\ndeadline = time.time() + 20\n${pythonPublish(pidFile, "str(os.getpid())")}\nwhile time.time() < deadline: time.sleep(0.5)\nsys.exit(0)\n`);
       writeFileSync(parent, `import os, time, sys
 deadline = time.time() + 20
-open(${JSON.stringify(ready)}, "w").close()
+${pythonPublish(ready, "str(os.getpid())")}
 while not os.path.exists(${JSON.stringify(go)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(0.001)
@@ -779,27 +849,32 @@ else:
       cp.execFileSync = function (file: any, args: any, options: any) {
         const actual = (originalExecFileSync as any)(file, args, options);
         if (file === "/bin/ps" && args?.[0] === "-axo" && args?.[1]?.includes("sess")) {
-          samples++;
-          if (samples === 2) {
-            const start = Date.now();
-            while (!existsSync(ready) && Date.now() - start < 5000) {
+          const parentPid = readFixturePid(ready);
+          const parentObserved = parentPid !== null && String(actual).split("\n").some((line) => {
+            const columns = line.trim().split(/\s+/);
+            return columns.length >= 5 && columns[0] === String(parentPid) && !columns[4].startsWith("Z");
+          });
+          if (parentObserved && ++samples === 2) {
+            // One shared bound leaves 350ms below the production 500ms gap limit.
+            const handoffDeadline = Date.now() + 150;
+            publishFixtureFile(go, "go");
+            while (Date.now() < handoffDeadline) {
+              descendantPid = readFixturePid(pidFile) ?? 0;
+              if (descendantPid > 0) break;
               Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
             }
-            writeFileSync(go, "go");
-            while (!existsSync(pidFile) && Date.now() - start < 5000) {
-              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-            }
-            if (existsSync(pidFile)) {
-              descendantPid = Number(readFileSync(pidFile, "utf8"));
-            }
-            while (Date.now() - start < 5000) {
+            assert.ok(descendantPid > 0, "Residual fixture must publish a valid positive PID within the shared 150ms handoff deadline");
+            while (Date.now() < handoffDeadline) {
               try {
-                const ppid = Number((originalExecFileSync as any)("/bin/ps", ["-o", "ppid=", "-p", String(descendantPid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
-                if (ppid === 1) break;
+                const ppid = parseFixturePid((originalExecFileSync as any)("/bin/ps", ["-o", "ppid=", "-p", String(descendantPid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: Math.max(1, handoffDeadline - Date.now()) }));
+                if (ppid !== null && ppid !== parentPid) {
+                  parentExitedInGap = true;
+                  break;
+                }
               } catch {}
               Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
             }
-            parentExitedInGap = true;
+            assert.equal(parentExitedInGap, true, "Residual fixture must observe reparenting within the shared 150ms handoff deadline");
           }
         }
         return actual;
@@ -828,14 +903,12 @@ else:
         } catch (e: any) {
           outcome = { code: e.code ?? e.name, message: e.message };
         } finally {
-          try { writeFileSync(go, "go"); } catch {}
+          try { publishFixtureFile(go, "go"); } catch {}
           cp.execFileSync = originalExecFileSync;
           syncBuiltinESMExports();
         }
 
-        if (!descendantPid && existsSync(pidFile)) {
-          descendantPid = Number(readFileSync(pidFile, "utf8"));
-        }
+        if (!descendantPid) descendantPid = readFixturePid(pidFile) ?? 0;
         let state = "ABSENT";
         if (descendantPid) {
           try {
@@ -850,12 +923,12 @@ else:
 
         const descendantExecuting = state !== "ABSENT" && !state.startsWith("Z");
 
-        assert.equal(outcome.code, "OK", "R4b residual (a): returns OK");
+        assert.equal(outcome.code, "OK", `R4b residual (a): returns OK; ${outcome.message ?? "no failure detail"}`);
         assert.equal(parentExitedInGap, true, "R4b residual (a): parent exited inside sampling gap");
         assert.equal(permitReacquired, true, "R4b residual (a): permit reacquired after turn");
         assert.equal(descendantExecuting, true, "R4b residual (a): fork+setsid+exit inside one sampling gap is not contained (stated macOS limit)");
       } finally {
-        try { writeFileSync(go, "go"); } catch {}
+        try { publishFixtureFile(go, "go"); } catch {}
         cp.execFileSync = originalExecFileSync;
         syncBuiltinESMExports();
         if (descendantPid) {
@@ -870,6 +943,7 @@ else:
       const fail1Dir = join(dir, "fail1");
       mkdirSync(fail1Dir, { recursive: true });
       const fail1PidFile = join(fail1Dir, "seen-descendant.pid");
+      const fail1ExitFile = join(fail1Dir, "parent-exit");
       const fail1Fixture = join(fail1Dir, "seen-descendant.py");
       writeFileSync(fail1Fixture, `import os, time, sys
 deadline = time.time() + 20
@@ -877,14 +951,13 @@ pid = os.fork()
 if pid == 0:
     null = os.open("/dev/null", os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(fail1PidFile)}, "w") as f: f.write(str(os.getpid()))
+${pythonPublish(fail1PidFile, "str(os.getpid())", "    ")}
     while time.time() < deadline:
         time.sleep(0.5)
     sys.exit(0)
-while not os.path.exists(${JSON.stringify(fail1PidFile)}):
+while not os.path.exists(${JSON.stringify(fail1ExitFile)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(0.001)
-time.sleep(0.05)
 sys.exit(0)
 `);
       const fail1Pool = new L10PermitPool(join(fail1Dir, "permits"), 1);
@@ -892,30 +965,31 @@ sys.exit(0)
       const fail1Claude = makeClaudeFixture(fail1Dir, "claude-fail1", `#!/bin/sh\nexec "${PYTHON_ABS}" "${fail1Fixture}" "$@"\n`);
       let seenInSnapshot = false;
       let seenPid = 0;
-      await spawnClaudeL10ChildForTest({
-        argv: [fail1Claude, ...fullClaudeArgs],
-        cwd: dir,
-        childEnv: fail1Env,
-        promptText: "",
-        timeoutMs: 2500,
-        teardownTimeoutMs: 300,
-        cancelSignal: { cancelled: () => false },
-        runId: "fail1-ctrl-run",
-        permitPool: fail1Pool,
-        onSnapshot: (_phase, seen) => {
-          if (seenPid === 0 && existsSync(fail1PidFile)) {
-            const raw = readFileSync(fail1PidFile, "utf8").trim();
-            const p = parseInt(raw, 10);
-            if (p > 0) seenPid = p;
-          }
-          if (seenPid !== 0 && seen.has(seenPid)) seenInSnapshot = true;
-        },
-      });
-      if (seenPid === 0 && existsSync(fail1PidFile)) {
-        const raw = readFileSync(fail1PidFile, "utf8").trim();
-        const p = parseInt(raw, 10);
-        if (p > 0) seenPid = p;
+      let fail1Snapshots = 0;
+      try {
+        await spawnClaudeL10ChildForTest({
+          argv: [fail1Claude, ...fullClaudeArgs],
+          cwd: dir,
+          childEnv: fail1Env,
+          promptText: "",
+          timeoutMs: 2500,
+          teardownTimeoutMs: 300,
+          cancelSignal: { cancelled: () => false },
+          runId: "fail1-ctrl-run",
+          permitPool: fail1Pool,
+          onSnapshot: (phase, seen) => {
+            if (seenPid === 0) seenPid = readFixturePid(fail1PidFile) ?? 0;
+            if (seenPid !== 0 && seen.has(seenPid)) seenInSnapshot = true;
+            if (phase === "poller" && seenPid !== 0 && seen.has(seenPid)) {
+              if (++fail1Snapshots >= 2) publishFixtureFile(fail1ExitFile, "go");
+            }
+          },
+        });
+      } finally {
+        publishFixtureFile(fail1ExitFile, "go");
       }
+      assert.ok(fail1Snapshots >= 2, "Seen-descendant parent exits only after two ancestry snapshots observe its descendant");
+      if (seenPid === 0) seenPid = readFixturePid(fail1PidFile) ?? 0;
       assert.ok(seenPid > 0, "R4b FAIL condition 1 CONTROL: descendant spawned");
       assert.equal(seenInSnapshot, true, "R4b FAIL condition 1 CONTROL: descendant was recorded in consumer snapshot");
       const isDead = await waitForExit(seenPid, 1000);
@@ -936,7 +1010,7 @@ pid = os.fork()
 if pid == 0:
     null = os.open("/dev/null", os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(fail1MutantPidFile)}, "w") as f: f.write(str(os.getpid()))
+${pythonPublish(fail1MutantPidFile, "str(os.getpid())", "    ")}
     while time.time() < deadline:
         time.sleep(0.5)
     sys.exit(0)
@@ -975,11 +1049,7 @@ sys.exit(0)
             try { process.kill(target, sig); return true; } catch { return false; }
           },
           onSnapshot: (_phase, seen) => {
-            if (mutantDescendantPid === 0 && existsSync(fail1MutantPidFile)) {
-              const raw = readFileSync(fail1MutantPidFile, "utf8").trim();
-              const p = parseInt(raw, 10);
-              if (p > 0) mutantDescendantPid = p;
-            }
+            if (mutantDescendantPid === 0) mutantDescendantPid = readFixturePid(fail1MutantPidFile) ?? 0;
             if (mutantDescendantPid !== 0 && seen.has(mutantDescendantPid)) {
               mutantSeenInSnapshot = true;
             }
@@ -989,11 +1059,7 @@ sys.exit(0)
         mutantError = e;
       }
 
-      if (mutantDescendantPid === 0 && existsSync(fail1MutantPidFile)) {
-        const raw = readFileSync(fail1MutantPidFile, "utf8").trim();
-        const p = parseInt(raw, 10);
-        if (p > 0) mutantDescendantPid = p;
-      }
+      if (mutantDescendantPid === 0) mutantDescendantPid = readFixturePid(fail1MutantPidFile) ?? 0;
 
       assert.ok(mutantDescendantPid > 0, "R4b FAIL condition 1 MUTANT: descendant spawned");
       assert.equal(mutantSeenInSnapshot, true, "R4b FAIL condition 1 MUTANT: descendant was recorded in consumer snapshot");
@@ -1031,9 +1097,8 @@ sys.exit(0)
       const fail2Parent = join(fail2Dir, "parent.py");
       writeFileSync(fail2Parent, `import os, time, sys
 deadline = time.time() + 20
-with open(${JSON.stringify(fail2PidFile)}, "w") as f:
-    f.write(str(os.getpid()))
-open(${JSON.stringify(fail2Ready)}, "w").close()
+${pythonPublish(fail2PidFile, "str(os.getpid())")}
+${pythonPublish(fail2Ready, '""')}
 while not os.path.exists(${JSON.stringify(fail2Stop)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(0.005)
@@ -1054,8 +1119,13 @@ sys.exit(0)
       });
 
       try {
-        while (!existsSync(fail2Ready) || !existsSync(fail2PidFile)) await new Promise((r) => setTimeout(r, 10));
-        const childPid = Number(readFileSync(fail2PidFile, "utf8"));
+        const readyDeadline = Date.now() + 2000;
+        let childPid = readFixturePid(fail2PidFile);
+        while ((!existsSync(fail2Ready) || childPid === null) && Date.now() < readyDeadline) {
+          await new Promise((r) => setTimeout(r, 10));
+          childPid = readFixturePid(fail2PidFile);
+        }
+        assert.ok(existsSync(fail2Ready) && childPid !== null, "Permit-liveness fixture must publish its ready marker and valid PID within 2000ms");
         let childAlive = false;
         try { process.kill(childPid, 0); childAlive = true; } catch {}
         assert.equal(childAlive, true, "R4b FAIL condition 2: child is alive");
@@ -1092,10 +1162,10 @@ sys.exit(0)
         assert.equal(childAliveAtPrematureClaim, true, "R4b FAIL condition 2 MUTANT: child was confirmed alive when premature claim succeeded");
 
         // Stop child and cleanly await completion
-        writeFileSync(fail2Stop, "stop");
+        publishFixtureFile(fail2Stop, "stop");
         await childPromise;
       } finally {
-        try { writeFileSync(fail2Stop, "stop"); } catch {}
+        try { publishFixtureFile(fail2Stop, "stop"); } catch {}
         try { await childPromise; } catch {}
       }
     }
@@ -1108,7 +1178,7 @@ sys.exit(0)
     {
       const hygieneDir = join(dir, "hygiene-poles");
       mkdirSync(hygieneDir, { recursive: true });
-      const pyBin = PYTHON_ABS ?? "/usr/local/bin/python";
+      const pyBin = PYTHON_ABS;
 
       // 1. MUTANT: fixture without self-deadline loops forever on missing stop file
       const mutantDir = join(hygieneDir, "mutant");
@@ -1117,8 +1187,7 @@ sys.exit(0)
       const mutantStop = join(mutantDir, "stop");
       const mutantScript = join(mutantDir, "fixture.py");
       writeFileSync(mutantScript, `import os, time, sys
-with open(${JSON.stringify(mutantPidFile)}, "w") as f:
-    f.write(str(os.getpid()))
+${pythonPublish(mutantPidFile, "str(os.getpid())")}
 while not os.path.exists(${JSON.stringify(mutantStop)}):
     time.sleep(0.01)
 sys.exit(0)
@@ -1135,17 +1204,16 @@ sys.exit(0)
         recordedMutantPids.add(mPid);
 
         const readyDeadline = Date.now() + 5000;
-        while (!existsSync(mutantPidFile)) {
+        let parsedPid = readFixturePid(mutantPidFile);
+        while (parsedPid === null) {
           if (Date.now() > readyDeadline) {
             throw new Error("Timed out waiting for mutant pid file");
           }
           await new Promise((r) => setTimeout(r, 10));
+          parsedPid = readFixturePid(mutantPidFile);
         }
-        const parsedPid = parseInt(readFileSync(mutantPidFile, "utf8").trim(), 10);
-        if (Number.isInteger(parsedPid)) {
-          mPid = parsedPid;
-          recordedMutantPids.add(mPid);
-        }
+        mPid = parsedPid;
+        recordedMutantPids.add(mPid);
 
         // Verify that the no-survivor check flags the mutant survivor
         let mutantFlagged = false;
@@ -1160,7 +1228,7 @@ sys.exit(0)
       } finally {
         // Guarantee cleanup: write stop file and await bounded exit
         try {
-          writeFileSync(mutantStop, "stop\n");
+          publishFixtureFile(mutantStop, "stop\n");
         } catch {}
 
         if (mPid != null) {
@@ -1185,8 +1253,7 @@ sys.exit(0)
       const ctrlScript = join(ctrlDir, "fixture.py");
       writeFileSync(ctrlScript, `import os, time, sys
 deadline = time.time() + 20
-with open(${JSON.stringify(ctrlPidFile)}, "w") as f:
-    f.write(str(os.getpid()))
+${pythonPublish(ctrlPidFile, "str(os.getpid())")}
 while not os.path.exists(${JSON.stringify(ctrlStop)}):
     if time.time() >= deadline: sys.exit(1)
     time.sleep(0.01)
@@ -1198,16 +1265,15 @@ sys.exit(0)
       }
       const recordedCtrlPids = new Set<number>([ctrlCp.pid]);
       const ctrlReadyDeadline = Date.now() + 5000;
-      while (!existsSync(ctrlPidFile)) {
+      let cPid = readFixturePid(ctrlPidFile);
+      while (cPid === null) {
         if (Date.now() > ctrlReadyDeadline) {
           throw new Error("Timed out waiting for ctrl pid file");
         }
         await new Promise((r) => setTimeout(r, 10));
+        cPid = readFixturePid(ctrlPidFile);
       }
-      const cPid = parseInt(readFileSync(ctrlPidFile, "utf8").trim(), 10);
-      if (Number.isInteger(cPid)) {
-        recordedCtrlPids.add(cPid);
-      }
+      recordedCtrlPids.add(cPid);
 
       // Wait until deadline passes (20s) - within 25s
       const ctrlExited = await waitForExit(cPid, 25000);
@@ -1221,6 +1287,8 @@ sys.exit(0)
 
     console.log("PASS R4: third blocks; pre-cancelled acquire rejects; bounded acquire times out; dead-pid reclaimable; atomic-rename claim leaves valid state; descendant-wait is in spawnClaudeL10Child (releasing only after close+group probe); multi-contender reclaim serialized; no-TMPDIR reparented descendant killed; unconfirmed teardown poisons permit; rework 7b safe group kill guard and sibling survival validated; rework 8 R4c late sibling sharing TMPDIR survives; rework 9 R4b positive containment and snapshot gap fail-closed poles verified; rework 12 R4b stated residual and final exit snapshot poles verified; rework 13 R4b test pairs measure claimed states (first seen in exit, seen descendant survival, alive at premature claim); rework 20 Item A fixture self-deadlines, finally releases, and no-survivor checks verified (CONTROL/MUTANT).");
   } finally {
+    os.userInfo = originalUserInfo;
+    syncBuiltinESMExports();
     try { assertNoSurvivingProcessesForDir(dir); } catch (e) { console.error(e); throw e; }
     try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }

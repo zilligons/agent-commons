@@ -11,9 +11,9 @@
  *
  */
 import assert from "node:assert/strict";
-import fs, { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, rmSync, existsSync, realpathSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, rmSync, existsSync, realpathSync, symlinkSync, renameSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -39,9 +39,16 @@ const {
   assertConfigGate,
   L10PermitPool,
   isSharedClaudePermitDir,
+  PYTHON_ABS,
 } = await import("./l10-process");
 const { PreviewBridgeAdapter } = await import("./preview_bridge");
 const { callForSlot } = await import("../cohort");
+
+function publishFixtureFile(path: string, content: string): void {
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, content);
+  renameSync(temporary, path);
+}
 
 function assertNoSurvivingProcessesForDir(targetDir: string): void {
   const resolvedDir = resolve(targetDir);
@@ -68,6 +75,13 @@ function assertNoSurvivingProcessesForDir(targetDir: string): void {
 
 async function main() {
   const scratch = mkdtempSync(join(tmpdir(), "l10-r5-"));
+  assert.ok(PYTHON_ABS, "absolute Python interpreter must resolve for fixtures");
+  mkdirSync(join(scratch, ".claude"), { mode: 0o700 });
+  writeFileSync(join(scratch, ".claude", "settings.json"), "{}\n");
+  // The production builder derives CONTROL HOME from userInfo, not $HOME.
+  const originalUserInfo = os.userInfo;
+  os.userInfo = (() => ({ ...originalUserInfo(), homedir: scratch })) as typeof os.userInfo;
+  syncBuiltinESMExports();
   // Install the resolver snapshot BEFORE any witness call (the witness
   // reads the configured seats from the snapshot).
   _setL10BinariesForTest(resolveL10Binaries({
@@ -228,7 +242,7 @@ async function main() {
     const claudeGoFile = join(scratch, "claude.go");
     writeFileSync(
       claudeBin,
-      `#!/usr/bin/env python3
+      `#!${PYTHON_ABS}
 import os, sys, time
 go_file = ${JSON.stringify(claudeGoFile)}
 deadline = time.time() + 15
@@ -328,12 +342,12 @@ sys.exit(1)
         onSnapshot: (phase) => {
           if (phase === "poller") {
             pollerObserved = true;
-            try { writeFileSync(claudeGoFile, "1"); } catch {}
+            try { publishFixtureFile(claudeGoFile, "1"); } catch {}
           }
         },
       });
     } finally {
-      try { writeFileSync(claudeGoFile, "1"); } catch {}
+      try { publishFixtureFile(claudeGoFile, "1"); } catch {}
     }
     assert.ok(testRes.childPid > 0, "Test entry: claudeBin with full contract admitted");
     assert.equal(pollerObserved, true, "Poller snapshot must have observed child before release");
@@ -350,8 +364,11 @@ sys.exit(1)
     }, (err: any) => err.code === "MODEL_UNAVAILABLE");
 
     // Rework 20 Item E Pole: Permit pool guard realpath comparison & no acquire on shared
+    const tmpAlias = join(scratch, "tmp-alias");
+    symlinkSync("/tmp", tmpAlias, "dir");
+    const sharedPermitAlias = join(tmpAlias, "l10", "permits");
     const sharedPermitPaths = [
-      "/private/tmp/l10/permits",
+      sharedPermitAlias,
       "/tmp/l10/permits/",
       "/tmp/l10/../l10/permits",
     ];
@@ -410,9 +427,9 @@ sys.exit(1)
     }, /PRIVATE_ACQUIRE_REACHED/);
     assert.equal(privateAcquireCalled, true, "Private pool was admitted and reached acquire");
 
-    // MUTANT check: string equality (pre-fix) failed on /private/tmp/l10/permits
+    // MUTANT check: string equality (pre-fix) failed on symlink aliases
     const mutantOldCheck = (dir: string) => dir === "/tmp/l10/permits";
-    assert.equal(mutantOldCheck("/private/tmp/l10/permits"), false, "MUTANT: old string equality failed to match /private/tmp/l10/permits");
+    assert.equal(mutantOldCheck(sharedPermitAlias), false, "MUTANT: old string equality failed to match the shared permit alias");
 
     // Rework 20 Item F Pole: Error type is AdapterFailure with code SECURITY_VIOLATION
     let itemFErr: any = null;
@@ -729,6 +746,8 @@ sys.exit(1)
 
     console.log("PASS R5: child-pid witness (post-offset OK, pre-offset/wrong-pid MISSING, wrong-model MISMATCH, malformed MISSING, correlated values surface); normalizer (structured envelope OK, plain text + missing field MODEL_EVIDENCE_MISSING); launch window, fixture-ts separation, production pre-spawn gates, effective config gates, routed missing-model refusal, rework 9 config discovery poles (CODEX-ABSENT, CLAUDE-UNKNOWN-SOURCE/TOML, CLAUDE-ANCESTOR-LOCAL), rework 10 managed-settings.json discovery, and rework 12 unreadable config directory validated.");
   } finally {
+    os.userInfo = originalUserInfo;
+    syncBuiltinESMExports();
     try { assertNoSurvivingProcessesForDir(scratch); } catch (e) { console.error(e); throw e; }
     try { rmSync(scratch, { recursive: true, force: true }); } catch {}
   }

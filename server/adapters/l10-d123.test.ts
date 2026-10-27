@@ -5,9 +5,8 @@
  *   name in the file is ENV_REFUSED and nothing of it reaches process.env.
  * D2: spawn-time tripwire — clean env spawns the fixture; a refused name
  *   injected after bootstrap refuses before exec (no child).
- * D3: source-level assertion that server/index.ts's static import closure
- *   is exactly {./bootstrap, ./adapters/l10-env, node builtins}; a scratch
- *   copy with a static application import fails.
+ * D3: startup imports only exact bootstrap dependencies and one import-free,
+ *   exact-name credential capture. A static application-import mutant fails.
  *
  */
 import assert from "node:assert/strict";
@@ -135,12 +134,16 @@ async function main() {
     // Source-level assertion on server/index.ts's static import closure.
     const indexSrc = readFileSync(new URL("../index.ts", import.meta.url).pathname, "utf8");
     const closure = staticImportClosure(indexSrc);
-    const allowed = new Set(["./bootstrap", "./adapters/l10-env", "./dotenv-guard"]);
+    const allowed = new Set(["./bootstrap", "./adapters/l10-env", "./dotenv-guard", "./adapters/provider_credentials"]);
     for (const spec of closure) {
       assert.ok(allowed.has(spec) || spec.startsWith("node:"),
-        `D3 CONTROL: index.ts static import '${spec}' must be ./bootstrap, ./adapters/l10-env, ./dotenv-guard, or a node builtin`);
+        `D3 CONTROL: index.ts static import '${spec}' must be an exact bootstrap dependency`);
     }
     assert.ok(closure.includes("./bootstrap"), "index.ts imports ./bootstrap");
+    assert.equal(closure.filter(spec => spec === "./adapters/provider_credentials").length, 1, "exactly one pure credential-capture dependency is allowed");
+    const captureSrc = readFileSync(new URL("./provider_credentials.ts", import.meta.url), "utf8");
+    assert.deepEqual(staticImportClosure(captureSrc), [], "capture module imports nothing; its AST purity guard is in provider-credentials.test.ts");
+    assert.equal((indexSrc.match(/captureProviderCredentials\(process\.env\)/g) ?? []).length, 1, "one exact startup capture call");
 
     // MUTANT — a scratch copy with a static application import added fails.
     const mutantSrc = indexSrc + `\nimport "./app";\n`;
@@ -158,7 +161,7 @@ async function main() {
 
     console.log("PASS D1: .env parse-and-reject (allowed applied, refused ENV_REFUSED + nothing applied, empty refused, missing no-op).");
     console.log("PASS D2: spawn tripwire (clean env spawns; post-bootstrap refused name refuses before exec; empty value counts).");
-    console.log("PASS D3: index.ts static closure = {./bootstrap, ./adapters/l10-env, node:*}; scratch ./app mutant caught; bootstrap.ts closure restricted.");
+    console.log("PASS D3: exact bootstrap dependencies plus one pure credential capture; application-import mutant caught.");
   } finally {
     try { rmSync(scratch, { recursive: true, force: true }); } catch {}
   }

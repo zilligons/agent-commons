@@ -1,18 +1,27 @@
 /**
  * L10 — l10-limits tests (two-pole, per FLEET-SOP §4.6(7)); R8 semantics.
  *
- * Covers (per design v3 §e L124-152 + the R8 deferral note):
+ * Covers the adaptive budgets and guarded accounting admission:
  * - boost ladder: two consecutive boosts set hold=true
  * - hold clears ONLY after TWO consecutive valid below-threshold
  *   completions (the slice-1 clear branch was unreachable)
  * - missing/invalid usage: no state change, usageValid=false
  * - reservation 250k exhaustion + boundary
- * - R8 deferral gate: live consumption refused until the operator
- *   acknowledges unaccounted consumption
+ * - live consumption refuses absent or forged accounting permits
  *
  */
 import assert from "node:assert/strict";
-import { nextPerTurnLimit, canReserve, assertLiveAccountingGate, L10_TOKEN_LADDER, L10_MAX_RUN_TOKENS } from "./l10-limits";
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("../offline-test-home.mjs");
+
+const { nextPerTurnLimit, canReserve, assertLiveAccountingGate, L10_TOKEN_LADDER, L10_MAX_RUN_TOKENS } = await import("./l10-limits");
+const { invalidateAccountingPermit, issueAccountingPermit } = await import("./l10-admission");
+const { AdapterFailure } = await import("./types");
 
 async function main() {
   // CONTROL — first turn at the bottom of the ladder stays at 1800 on a
@@ -80,15 +89,19 @@ async function main() {
   assert.equal(over.ok, false);
   assert.equal(over.reason, "OVERFLOW");
 
-  // R8 (rework 6): non-bypassable accounting deferral gate: ALWAYS refuses, even with AGENT_COMMONS_L10_ACCOUNTING=measured
-  assert.throws(() => assertLiveAccountingGate({ AGENT_COMMONS_L10_ACCOUNTING: "measured" }), /LIMIT_UNSUPPORTED/);
-  assert.throws(() => assertLiveAccountingGate({}), /LIMIT_UNSUPPORTED/);
-  assert.throws(() => assertLiveAccountingGate({ AGENT_COMMONS_L10_ACCOUNTING: "yes" }), /LIMIT_UNSUPPORTED/);
+  const permit = issueAccountingPermit({ validate() {}, start() {} });
+  assert.doesNotThrow(() => assertLiveAccountingGate(permit));
+  invalidateAccountingPermit(permit);
+  // An expired permit, environment acknowledgement or caller-created object is invalid.
+  for (const invalid of [undefined, null, {}, permit, { AGENT_COMMONS_L10_ACCOUNTING: "measured" }]) {
+    assert.throws(() => assertLiveAccountingGate(invalid),
+      (error: unknown) => error instanceof AdapterFailure && error.code === "LIMIT_UNSUPPORTED");
+  }
 
   // CONTROL — ladder shape.
   assert.deepEqual([...L10_TOKEN_LADDER], [1800, 3000, 6000, 12000, 24000]);
 
-  // R8 (rework 6): engine entry modelCall refuses via non-bypassable assertLiveAccountingGate
+  // Engine entry modelCall also refuses without accounting admission.
   const { modelCall } = await import("../engine");
   const agent = { id: "atlas", name: "Atlas", provider: "OpenAI", model: "gpt5_mini", role: "Protocol architect", color: "green" };
   delete process.env.AGENT_COMMONS_OFFLINE;
@@ -96,7 +109,7 @@ async function main() {
     await modelCall(agent as any, "prompt", [], null);
   }, (err: any) => err.code === "LIMIT_UNSUPPORTED" || err.message?.includes("LIMIT_UNSUPPORTED"), "engine modelCall refuses via assertLiveAccountingGate");
 
-  console.log("PASS R8: boost/hold (two boosts set hold), hold clears after TWO valid below-threshold completions, missing/invalid/fractional usage no-change, 250k exhaustion, non-bypassable deferral gate, engine entry refusal.");
+  console.log("PASS R8: boost/hold (two boosts set hold), hold clears after TWO valid below-threshold completions, missing/invalid/fractional usage no-change, 250k exhaustion, guarded accounting admission, engine entry refusal.");
 }
 
 main().catch((e) => { console.error("FAIL:", e); process.exit(1); });

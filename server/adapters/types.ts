@@ -4,12 +4,14 @@
  *   §e L128-130 + §g.2). The seam is
  *   `CohortConsole.callForSlot(member, prompt, generation, timeoutMs)`.
  *
- * On the default path (no config, no AGENT_COMMONS_ADAPTER) it delegates to
+ * Governance defaults to the metered Responses adapter. Other default slots delegate to
  * `CohortConsole.call(model, prompt, generation, timeoutMs)` — the unchanged
  * spawn of `python server/cohort_bridge.py` — so the three existing test stubs
- * at server/cohort.test.ts:21,34,45 (which stub `c.call`) keep working.
+ * at server/cohort.test.ts (which explicitly select preview-bridge and stub `c.call`) keep working.
  *
  */
+
+import type { AccountingPermit } from "./l10-admission";
 
 /** L2 base fields (every adapter MUST consume these). */
 export type AdapterRequestBase = {
@@ -25,7 +27,7 @@ export type AdapterRequestBase = {
 export type AdapterLimits = {
   readonly maxCompletionTokens: number;
   readonly maxTotalTokens: number;
-  readonly maxCliModelCalls: 1; // off in slice 1
+  readonly maxCliModelCalls: 1; // reservation covers one bounded adapter invocation
 };
 
 /** L10 §e L128: reservation covers prompt+gen. */
@@ -41,6 +43,7 @@ export type AdapterRequest = AdapterRequestBase & {
   readonly callId: string;
   readonly limits: AdapterLimits;
   readonly reservation: AdapterReservation;
+  readonly accountingPermit?: AccountingPermit;
 };
 
 /** L2 base result — every adapter returns this at minimum. */
@@ -57,8 +60,22 @@ export type AdapterUsage = {
   readonly completionTokens: number | null;
   readonly totalTokens: number | null;
   readonly coversInternalCalls: boolean;
-  readonly source: "cli-envelope";
+  readonly source: "cli-envelope" | "provider-response";
   readonly fieldPath: string;
+};
+
+/** Sanitized provider token counters only; omitted breakdowns remain unknown. */
+export type AdapterProviderUsage = {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly total_tokens: number;
+  readonly input_tokens_details: {
+    readonly cached_tokens: number | null;
+    readonly cache_write_tokens: number | null;
+  };
+  readonly output_tokens_details: {
+    readonly reasoning_tokens: number | null;
+  };
 };
 
 /** R7 (rework 3): the discriminated result. A live adapter returns
@@ -71,13 +88,14 @@ export type AdapterResultLive = AdapterResult & {
   readonly modelEvidence: AdapterModelEvidence;
   readonly usage: AdapterUsage | null;
   readonly metrics: AdapterMetrics;
+  readonly providerUsage?: AdapterProviderUsage;
 };
 export type AdapterResultOffline = AdapterResult & { readonly kind: "offline" };
 export type AdapterResultTyped = AdapterResultLive | AdapterResultOffline;
 
 /** L10 §e L130 — observation of the actual model the child reported. */
 export type AdapterModelEvidence = {
-  readonly source: "cli-envelope";   // future: "host-cookie", "wrapper-banner"
+  readonly source: "cli-envelope" | "provider-response";
   readonly fieldPath: string;        // e.g. "stop_reason.model" for Anthropic envelopes
 };
 
@@ -104,6 +122,7 @@ export type AdapterLiveExtras = {
   readonly modelEvidence: AdapterModelEvidence;
   readonly usage: AdapterUsage | null;
   readonly metrics: AdapterMetrics;
+  readonly providerUsage?: AdapterProviderUsage;
 };
 
 export type AdapterErrorShape = {
@@ -145,5 +164,13 @@ export class AdapterFailure extends Error {
 export interface ModelAdapter {
   readonly name: string;                    // "preview-bridge" | "stub" | future names
   readonly makesLiveCalls: boolean;         // stub=false, preview-bridge=true, future real adapters=true
+  readonly metering?: {
+    readonly version: 1;
+    readonly coversInternalCalls: true;
+    bounds(input: { prompt: string; maxCompletionTokens: number; slotId?: string; runtimeModel?: string; timeoutMs?: number; signal?: { cancelled: () => boolean } }): {
+      promptTokensUpper: number;
+      totalTokensUpper: number;
+    } | Promise<{ promptTokensUpper: number; totalTokensUpper: number }>;
+  };
   call(req: AdapterRequest): Promise<AdapterResultTyped>; // throws AdapterFailure-compatible error on failure
 }

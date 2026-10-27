@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "./lib/queryClient";
+import { useOperatorAccess } from "./lib/useOperatorAccess";
+import { OperatorRequestError } from "./lib/operatorToken";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -110,6 +112,7 @@ const formSchema = z.object({
     ),
 });
 export default function NetworkConsole({ view }: { view: string }) {
+  const access = useOperatorAccess();
   const pane = useRef<HTMLElement>(null);
   useEffect(() => {
     pane.current?.scrollTo({ top: 0 });
@@ -117,6 +120,7 @@ export default function NetworkConsole({ view }: { view: string }) {
   const { data, isLoading, error } = useQuery<Data>({
     queryKey: ["/api/network"],
     refetchInterval: 5000,
+    enabled: access.configured,
   });
   const [createOpen, setCreateOpen] = useState(false),
     [selected, setSelected] = useState<Profile | null>(null),
@@ -169,6 +173,7 @@ export default function NetworkConsole({ view }: { view: string }) {
       setNotice(e.message);
     }
   }
+  if (!access.configured) return <p>Workspace locked. Save an operator token to continue.</p>;
   if (isLoading)
     return (
       <section className="detail-page">
@@ -181,7 +186,7 @@ export default function NetworkConsole({ view }: { view: string }) {
     return (
       <section className="detail-page">
         <div className="error-banner">
-          The deployment console is unavailable.{" "}
+          {error instanceof OperatorRequestError ? error.message : "The deployment console is unavailable."}{" "}
           <button
             data-testid="network-retry"
             onClick={() =>
@@ -352,7 +357,7 @@ export default function NetworkConsole({ view }: { view: string }) {
                         {c.standards.map((s) => (
                           <a
                             key={s.code}
-                            href={s.url}
+                            href={httpsDocumentUrl(s.url)}
                             target="_blank"
                             rel="noopener noreferrer"
                             data-testid={`standard-${s.code}`}
@@ -705,6 +710,15 @@ export default function NetworkConsole({ view }: { view: string }) {
     </section>
   );
 }
+export function httpsDocumentUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function documentCreateAnchor(url: string) {
   const anchor = document.createElement("a");
   anchor.href = url;

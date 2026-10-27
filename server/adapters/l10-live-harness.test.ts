@@ -14,44 +14,74 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, appendFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import os from "node:os";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { fileURLToPath } from "node:url";
 import { runTwoPoleForTest, selectTwoPoleMode } from "../../packages/agent-commons/scripts/l10-twopole";
 import { witnessFromOffset, normalizeCliEnvelope } from "./l10-witness";
 import { _setL10BinariesForTest, _resetL10BinariesForTest, resolveL10Binaries } from "./config";
 
-const ROOT = new URL("../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HARNESS_SCRIPT = join(ROOT, "packages/agent-commons/scripts/l10-twopole.ts");
-const TSX_BIN = join(ROOT, "node_modules/.bin/tsx");
+const TSX_LOADER = createRequire(new URL("../../package.json", import.meta.url)).resolve("tsx");
+let cliFixtureEnv: Record<string, string> = {};
 
-function runCliHarness(args: string[], env: Record<string, string> = {}): Promise<{ rc: number | null; out: string }> {
+function createFixtureHome(home: string) {
+  mkdirSync(join(home, ".claude"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, ".claude", "settings.json"), "{}\n");
+  mkdirSync(join(home, ".codex"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, ".codex", "config.toml"), "");
+}
+
+function runCliHarness(args: string[], env: Record<string, string> = {}): Promise<{ rc: number | null; out: string; evidenceDir: string; home: string }> {
+  const invocationDir = mkdtempSync(join(cliFixtureEnv.HOME, "cli-"));
+  const home = join(invocationDir, "home");
+  createFixtureHome(home);
+  const evidenceDir = join(invocationDir, "evidence");
+  const tempDir = join(invocationDir, "tmp");
+  mkdirSync(evidenceDir, { mode: 0o700 });
+  mkdirSync(tempDir, { mode: 0o700 });
   return new Promise((resolve) => {
     let out = "";
-    const child = spawn(TSX_BIN, [HARNESS_SCRIPT, ...args], {
+    // Use the test's Node and loader directly, avoiding another runtime lookup
+    // and the tsx CLI's separate IPC setup beneath the isolated TMPDIR.
+    const child = spawn(process.execPath, ["--import", TSX_LOADER, HARNESS_SCRIPT, ...args, `--evidence-dir=${evidenceDir}`], {
       cwd: ROOT,
       env: {
         PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
-        HOME: process.env.HOME!,
         USER: process.env.USER!,
         LOGNAME: process.env.LOGNAME!,
         SHELL: process.env.SHELL!,
         TERM: process.env.TERM!,
         LANG: process.env.LANG!,
-        TMPDIR: process.env.TMPDIR!,
+        ...cliFixtureEnv,
         ...env,
+        HOME: home,
+        TMPDIR: tempDir,
+        AGENT_COMMONS_PROVIDER_REQUESTS_ENABLED: "0",
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdout!.on("data", (d: Buffer) => { out += d.toString("utf8"); });
     child.stderr!.on("data", (d: Buffer) => { out += d.toString("utf8"); });
-    child.on("error", (e: Error) => resolve({ rc: null, out: out + `\nSPAWN-ERROR: ${e.message}` }));
-    child.on("close", (code) => resolve({ rc: code, out }));
+    child.on("error", (e: Error) => resolve({ rc: null, out: out + `\nSPAWN-ERROR: ${e.message}`, evidenceDir, home }));
+    child.on("close", (code) => resolve({ rc: code, out, evidenceDir, home }));
   });
 }
 
 async function main() {
   const scratch = mkdtempSync(join(tmpdir(), "l10-live-harness-"));
+  createFixtureHome(scratch);
+  const originalUserInfo = os.userInfo;
+  os.userInfo = ((options?: any) => ({ ...originalUserInfo(options), homedir: scratch })) as typeof os.userInfo;
+  syncBuiltinESMExports();
+  const homePreload = join(scratch, "fixture-home.mjs");
+  writeFileSync(homePreload, 'import os from "node:os"; import {syncBuiltinESMExports} from "node:module"; const original=os.userInfo; os.userInfo=(options)=>({...original(options),homedir:process.env.HOME}); syncBuiltinESMExports();\n');
+  cliFixtureEnv = { HOME: scratch, NODE_OPTIONS: `--import ${homePreload}` };
   const authDir = join(scratch, "run-ids");
   mkdirSync(authDir, { recursive: true, mode: 0o700 });
   const evidenceDir = join(scratch, "evidence");
@@ -100,6 +130,13 @@ exit 0
     AGENT_COMMONS_MODEL_LEDGER: fixtureLedger,
     AGENT_COMMONS_WITNESS_SEATS: "seat-alpha,seat-beta",
   } as NodeJS.ProcessEnv));
+  Object.assign(cliFixtureEnv, {
+    AGENT_COMMONS_CLAUDE_BIN: fixtureCli,
+    AGENT_COMMONS_CODEX_BIN: fixtureCli,
+    AGENT_COMMONS_GROK_BIN: fixtureCli,
+    AGENT_COMMONS_MODEL_LEDGER: fixtureLedger,
+    AGENT_COMMONS_WITNESS_SEATS: "seat-alpha,seat-beta",
+  });
 
   const fixtureCliBlock = join(scratch, "mock-cli-block.sh");
   writeFileSync(fixtureCliBlock, `#!/bin/sh
@@ -162,7 +199,7 @@ exit 0
     // 1. Reservation tests: single-use run id
     // =========================================================================
     // CONTROL: valid reservation file exists with mode 0600; consumed once (rc 0)
-    const validId = `test-run-valid-${Date.now()}`;
+    const validId = `test-run-valid-${randomUUID()}`;
     const validAuthPath = join(authDir, `${validId}.authorized`);
     writeFileSync(validAuthPath, "authorized", { mode: 0o600 });
 
@@ -178,7 +215,9 @@ exit 0
         evidenceDir,
       },
     });
-    assert.equal(firstRun.exitCode, 0, `CONTROL: valid authorized id runs successfully (got rc ${firstRun.exitCode})`);
+    assert.equal(firstRun.exitCode, 0, JSON.stringify({ rc: firstRun.exitCode, poles: firstRun.report?.poles?.map((pole: any) => ({
+      status: pole.status, verdict: pole.verdict, exitCode: pole.exitCode, code: pole.envelope?.code,
+    })) }));
     assert.equal(existsSync(validAuthPath), false, "authorized file must be consumed (renamed)");
     assert.equal(existsSync(join(authDir, `${validId}.spent`)), true, "spent file must exist after first run");
 
@@ -200,7 +239,7 @@ exit 0
     // MUTANT 2: missing AGENT_COMMONS_L10_LIVE_AUTHORIZED env var -> rc 64
     const missingEnvRun = await runTwoPoleForTest({
       slot: "continuity",
-      runId: `test-missing-env-${Date.now()}`,
+      runId: `test-missing-env-${randomUUID()}`,
       live: true,
       env: { ...process.env, AGENT_COMMONS_L10_LIVE_AUTHORIZED: "" },
       _forTest: {
@@ -215,7 +254,7 @@ exit 0
     // MUTANT 3: mismatched runId -> rc 64
     const mismatchedRun = await runTwoPoleForTest({
       slot: "continuity",
-      runId: `run-A-${Date.now()}`,
+      runId: `run-A-${randomUUID()}`,
       live: true,
       env: { ...process.env, AGENT_COMMONS_L10_LIVE_AUTHORIZED: "run-B" },
       _forTest: {
@@ -228,7 +267,7 @@ exit 0
     assert.equal(mismatchedRun.exitCode, 64, "MUTANT: mismatched AGENT_COMMONS_L10_LIVE_AUTHORIZED must exit 64");
 
     // MUTANT 4: matching env var but missing .authorized file -> rc 64
-    const noFileId = `run-nofile-${Date.now()}`;
+    const noFileId = `run-nofile-${randomUUID()}`;
     const noFileRun = await runTwoPoleForTest({
       slot: "continuity",
       runId: noFileId,
@@ -244,7 +283,7 @@ exit 0
     assert.equal(noFileRun.exitCode, 64, "MUTANT: missing .authorized file must exit 64");
 
     // MUTANT 5: _forTest with fixtureLedgerPath but missing fixtureBin -> rc 64
-    const noFixtureBinId = `test-nofixturebin-${Date.now()}`;
+    const noFixtureBinId = `test-nofixturebin-${randomUUID()}`;
     const noFixtureBinRun = await runTwoPoleForTest({
       slot: "continuity",
       runId: noFixtureBinId,
@@ -259,7 +298,7 @@ exit 0
     assert.equal(noFixtureBinRun.exitCode, 64, "MUTANT: _forTest without fixtureBin must be refused with rc 64");
 
     // MUTANT 5b: _forTest presence with empty string values -> rc 64, never live:true
-    const emptyForTestId = `test-emptyfortest-${Date.now()}`;
+    const emptyForTestId = `test-emptyfortest-${randomUUID()}`;
     const emptyForTestRun = await runTwoPoleForTest({
       slot: "continuity",
       runId: emptyForTestId,
@@ -298,20 +337,32 @@ exit 0
     // 2. Production CLI refusal of test flags
     // =========================================================================
     // CONTROL: normal CLI invocation runs fixture binary cleanly
-    const cliControlId = `cli-ctrl-${Date.now()}`;
+    const cliControlId = `cli-ctrl-${randomUUID()}`;
     const cliControl = await runCliHarness(["--slot=continuity", `--run-id=${cliControlId}`]);
-    assert.equal(cliControl.rc, 0, `CONTROL: normal CLI invocation without test flags completes rc 0 (got ${cliControl.rc})`);
+    assert.equal(cliControl.rc, 0, JSON.stringify({ rc: cliControl.rc,
+      exception: cliControl.out.match(/FATAL:\s*([A-Za-z]+)/)?.[1],
+      code: cliControl.out.match(/\bcode:\s*['"]([A-Z_0-9]+)['"]/)?.[1],
+      poles: [...cliControl.out.matchAll(/verdict=([A-Z_]+) exit=(-?\d+) status=([A-Z_]+)/g)].map(match => ({ verdict: match[1], exitCode: Number(match[2]), code: match[3] })),
+      source: [...cliControl.out.matchAll(/([^/\s():]+\.(?:ts|mjs)):(\d+):(\d+)/g)].slice(0,3).map(match => ({ file: match[1], line: Number(match[2]), column: Number(match[3]) })),
+    }));
+    const cliControlReport = JSON.parse(readFileSync(join(cliControl.evidenceDir, cliControlId, "report.json"), "utf8"));
+    assert.equal(cliControlReport.runId, cliControlId, "CONTROL: CLI report must belong to this invocation");
+    assert.equal(cliControlReport.live, false, "CONTROL: offline CLI must report live: false");
+    assert.ok(cliControlReport.scratchHome.startsWith(cliControl.evidenceDir + "/"), "CONTROL: CLI scratch home must stay inside private evidence");
 
     // MUTANT: CLI invocation with --fixture-bin-for-test is refused with rc 64
-    const cliMutantId = `cli-mut-${Date.now()}`;
+    const cliMutantId = `cli-mut-${randomUUID()}`;
     const cliMutant = await runCliHarness(["--slot=continuity", `--run-id=${cliMutantId}`, `--fixture-bin-for-test=${fixtureCli}`]);
     assert.equal(cliMutant.rc, 64, `MUTANT: CLI with --fixture-bin-for-test must be refused with rc 64 (got ${cliMutant.rc})`);
     assert.ok(cliMutant.out.includes("REFUSED: test flags not permitted on production CLI"), "MUTANT: output must state refusal reason");
+    assert.notEqual(cliMutant.evidenceDir, cliControl.evidenceDir, "MUTANT: each CLI invocation must own private evidence");
+    assert.notEqual(cliMutant.home, cliControl.home, "MUTANT: each CLI invocation must own a private home");
+    assert.equal(existsSync(join(cliMutant.evidenceDir, cliMutantId)), false, "MUTANT: refused CLI must not create run evidence");
 
     // =========================================================================
     // 3. Live path via fixture binary (Claude route): CONTROL & MUTANTs
     // =========================================================================
-    const claudeRunId = `claude-live-test-${Date.now()}`;
+    const claudeRunId = `claude-live-test-${randomUUID()}`;
     writeFileSync(join(authDir, `${claudeRunId}.authorized`), "auth", { mode: 0o600 });
     const claudeRun = await runTwoPoleForTest({
       slot: "continuity",
@@ -357,7 +408,7 @@ exit 0
     // 4. Live path via fixture binary (Codex route): CONTROL & MUTANT (all 3 outcomes)
     // =========================================================================
     // Outcome 1: PASS = nonzero exit AND no valid model envelope AND stderr matches auth pattern
-    const codexRunId = `codex-live-test-${Date.now()}`;
+    const codexRunId = `codex-live-test-${randomUUID()}`;
     writeFileSync(join(authDir, `${codexRunId}.authorized`), "auth", { mode: 0o600 });
     const codexRun = await runTwoPoleForTest({
       slot: "governance",
@@ -387,7 +438,7 @@ exit 0
     assert.equal(codexMutant.stderrAuthRejection, true, "Codex MUTANT records stderrAuthRejection: true");
 
     // Outcome 2: BLOCK = exit 0, or any valid model envelope
-    const codexBlockId = `codex-block-test-${Date.now()}`;
+    const codexBlockId = `codex-block-test-${randomUUID()}`;
     writeFileSync(join(authDir, `${codexBlockId}.authorized`), "auth", { mode: 0o600 });
     const codexBlockRun = await runTwoPoleForTest({
       slot: "governance",
@@ -408,7 +459,7 @@ exit 0
     assert.equal(codexMutantBlock.status, "BLOCK");
 
     // Outcome 3: INCONCLUSIVE = nonzero exit without auth pattern in stderr
-    const codexInconclusiveId = `codex-inconclusive-test-${Date.now()}`;
+    const codexInconclusiveId = `codex-inconclusive-test-${randomUUID()}`;
     writeFileSync(join(authDir, `${codexInconclusiveId}.authorized`), "auth", { mode: 0o600 });
     const codexInconclusiveRun = await runTwoPoleForTest({
       slot: "governance",
@@ -430,7 +481,7 @@ exit 0
     assert.equal(codexMutantInconclusive.stderrAuthRejection, false);
 
     // Outcome 4 (R16-P1-1): BLOCK = nested agent_message item blocks MUTANT despite nonzero exit and auth stderr
-    const codexAgentMsgId = `codex-agentmsg-test-${Date.now()}`;
+    const codexAgentMsgId = `codex-agentmsg-test-${randomUUID()}`;
     writeFileSync(join(authDir, `${codexAgentMsgId}.authorized`), "auth", { mode: 0o600 });
     const codexAgentMsgRun = await runTwoPoleForTest({
       slot: "governance",
@@ -621,6 +672,9 @@ exit 0
 
     console.log("PASS L10 live harness offline verification: reservation (single-use, spent, missing, mismatched), CLI test flag refusal (rc 64), live fixture path (Claude CONTROL/MUTANTs, Codex CONTROL/MUTANT), ledger witness (pid/lane/seat/model matching vs mismatching), envelope normalizer (structured JSON vs plain/malformed).");
   } finally {
+    os.userInfo = originalUserInfo;
+    syncBuiltinESMExports();
+    cliFixtureEnv = {};
     try { rmSync(scratch, { recursive: true, force: true }); } catch {}
   }
 }

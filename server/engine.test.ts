@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { encode, decode, evaluate, corpus, engine } from "./engine";
-import { storage } from "./storage";
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("./offline-test-home.mjs");
+
+const { encode, decode, evaluate, corpus, engine } = await import("./engine");
+const { storage } = await import("./storage");
 
 const snapshot=JSON.parse(JSON.stringify(engine.state));
 try {

@@ -62,7 +62,8 @@ jobs:
           python3 -m unittest discover -s server -p cohort_bridge_test.py
           NODE_OPTIONS="--import=$PWD/server/offline-test-home.mjs" \
             TSX_TSCONFIG_PATH="$PWD/tsconfig.json" \
-            node --import tsx --test server/*.test.ts
+            AGENT_COMMONS_PROVIDER_REQUESTS_ENABLED=0 \
+            node --import tsx --test --test-concurrency=1 server/*.test.ts server/adapters/*.test.ts
           npm run build
   package:
     name: Test and cold-install packed package

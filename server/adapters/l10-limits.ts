@@ -1,11 +1,12 @@
 /**
  * L10 — adaptive limits, reservations, 250k exhaustion (design v3 §e;
- * L10 seam-review item 1). Type-only module; the runtime state lives in
- * the engine (server/cohort.ts) once the seam delta lands.
+ * L10 seam-review item 1). Pure limit calculations live here; durable
+ * admission, usage receipts and per-agent state live in l10-accounting.ts
+ * and l10-accounting-store.ts.
  *
  */
 
-import { AdapterFailure } from "./types";
+import { assertAccountingPermit } from "./l10-admission";
 
 export const L10_TOKEN_LADDER = Object.freeze([1800, 3000, 6000, 12000, 24000] as const);
 export const L10_TURN_LADDER_MULTIPLIER = Object.freeze([1, 2, 3] as const);
@@ -21,7 +22,7 @@ export const L10_BOOST_THRESHOLD_FRACTION = 0.8; // 80% of the granted completio
 export type Limits = {
   maxCompletionTokens: number;
   maxTotalTokens: number;
-  maxCliModelCalls: 1; // off in this slice
+  maxCliModelCalls: 1; // reservation covers one bounded adapter invocation
 };
 
 export type Reservation = {
@@ -134,106 +135,7 @@ export function canReserve(state: { chargedTokens: number; reservedTokens: numbe
   return { ok: true };
 }
 
-/**
- * R8 DEFERRAL GATE (rework 3; the review allows the accounting deferral ONLY
- * with this gate): full runtime accounting — settling reservations
- * against measured usage, turn-ladder operation, cohort callers of
- * nextPerTurnLimit/canReserve — is DEFERRED to a later slice. Until it
- * lands, UNACCOUNTED live consumption is explicitly gated: any live L10
- * call is refused with LIMIT_UNSUPPORTED unless the operator has set
- * AGENT_COMMONS_L10_ACCOUNTING=measured, acknowledging that consumption
- * is not being accounted against the 250k run cap by this build.
- *
- * Offline paths (stub, fixture harness) do not call this gate.
- */
-export function assertLiveAccountingGate(_env: NodeJS.ProcessEnv = process.env): void {
-  throw new AdapterFailure(
-    "LIMIT_UNSUPPORTED",
-    "LIMIT_UNSUPPORTED: live L10 consumption is unaccounted in this slice " +
-    "(reservation settlement and the turn ladder are deferred per the R8 deferral); " +
-    "refusing live calls non-bypassably",
-    null,
-    false,
-  );
-}
-
-export const L10_TRIAL_TURN_CEILING = 7;
-
-let cachedTrialCap: number | null | undefined = undefined;
-let trialTurnCounter = 0;
-let bypassCounterCheckForTest = false;
-
-/**
- * C2: assertL10TrialEnabled reads AGENT_COMMONS_L10_TRIAL_TURNS once per process
- * and caches the result. It returns the cap when the value is a decimal integer
- * string in 1..7, nothing else. For missing, empty, non-integer, 0, or >7 values,
- * it throws AdapterFailure("LIMIT_UNSUPPORTED", ...).
- */
-export function assertL10TrialEnabled(): number {
-  if (cachedTrialCap !== undefined) {
-    if (cachedTrialCap === null) {
-      throw new AdapterFailure(
-        "LIMIT_UNSUPPORTED",
-        "L10 trial not enabled: AGENT_COMMONS_L10_TRIAL_TURNS must be an integer between 1 and 7",
-        null,
-        false,
-      );
-    }
-    return cachedTrialCap;
-  }
-  const raw = process.env.AGENT_COMMONS_L10_TRIAL_TURNS;
-  if (raw === undefined || raw === "" || !/^[1-7]$/.test(raw)) {
-    cachedTrialCap = null;
-    throw new AdapterFailure(
-      "LIMIT_UNSUPPORTED",
-      "L10 trial not enabled: AGENT_COMMONS_L10_TRIAL_TURNS must be an integer between 1 and 7",
-      null,
-      false,
-    );
-  }
-  const val = parseInt(raw, 10);
-  if (val < 1 || val > L10_TRIAL_TURN_CEILING) {
-    cachedTrialCap = null;
-    throw new AdapterFailure(
-      "LIMIT_UNSUPPORTED",
-      "L10 trial not enabled: AGENT_COMMONS_L10_TRIAL_TURNS must be an integer between 1 and 7",
-      null,
-      false,
-    );
-  }
-  cachedTrialCap = val;
-  return val;
-}
-
-/**
- * C2: consumeL10TrialTurn calls assertL10TrialEnabled().
- * If the process-wide counter has already reached the cap, it throws
- * AdapterFailure("LIMIT_UNSUPPORTED", "trial cap of N live turns reached for this server run").
- * Otherwise it increments the counter before returning and returns the new count.
- * Prints ONE line per consumption to stdout:
- * L10 trial live turn <n>/<cap> slot=<slotId>
- */
-export function consumeL10TrialTurn(slotId: string): number {
-  const cap = assertL10TrialEnabled();
-  if (!bypassCounterCheckForTest && trialTurnCounter >= cap) {
-    throw new AdapterFailure(
-      "LIMIT_UNSUPPORTED",
-      `trial cap of ${cap} live turns reached for this server run`,
-      null,
-      false,
-    );
-  }
-  trialTurnCounter++;
-  process.stdout.write(`L10 trial live turn ${trialTurnCounter}/${cap} slot=${slotId}\n`);
-  return trialTurnCounter;
-}
-
-export function resetL10TrialCounterForTest(options?: { cap?: number | null; counter?: number; bypass?: boolean }): void {
-  cachedTrialCap = options?.cap !== undefined ? options.cap : undefined;
-  trialTurnCounter = options?.counter ?? 0;
-  bypassCounterCheckForTest = options?.bypass ?? false;
-}
-
-export function getL10TrialCounterForTest(): number {
-  return trialTurnCounter;
+/** Live calls require a reservation-backed permit issued by accounting admission. */
+export function assertLiveAccountingGate(permit?: unknown): void {
+  assertAccountingPermit(permit);
 }

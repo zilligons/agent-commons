@@ -32,6 +32,8 @@ test("recorded vectors match server network identity", () => {
     delete env.NODE_OPTIONS;
     delete env.NODE_TEST_CONTEXT;
     env.L7_DB_HOME = home;
+    env.AGENT_COMMONS_DATA_DIR = home;
+    env.AGENT_COMMONS_APP_DIR = root;
     env.L7_VECTORS = vectorsPath;
     env.L7_NETWORK_MODULE = pathToFileURL(join(here, "network.ts")).href;
     env.TSX_TSCONFIG_PATH = join(root, "tsconfig.json");

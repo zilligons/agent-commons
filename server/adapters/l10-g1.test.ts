@@ -23,8 +23,8 @@
 import assert from "node:assert/strict";
 import cp, { spawn, execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import { mkdtempSync, readFileSync, rmSync, readdirSync, mkdirSync, writeFileSync, unlinkSync, existsSync, chmodSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, readdirSync, mkdirSync, writeFileSync, unlinkSync, existsSync, chmodSync, realpathSync, renameSync } from "node:fs";
+import os, { tmpdir } from "node:os";
 import { join, resolve, basename, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -97,8 +97,37 @@ _setL10BinariesForTest(resolveL10Binaries({
 
 const fullClaudeArgs = buildL10Argv({ slotId: "continuity" }).slice(1);
 
+function publishFixtureFile(path: string, content: string): void {
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, content);
+  renameSync(temporary, path);
+}
+
+function readFixturePid(path: string): number | null {
+  let raw: string;
+  try { raw = readFileSync(path, "utf8").trim(); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  if (!/^[1-9][0-9]*$/.test(raw)) return null;
+  const pid = Number(raw);
+  return Number.isSafeInteger(pid) ? pid : null;
+}
+
+function pythonPublish(path: string, value: string, indent = ""): string {
+  return `${indent}with open(${JSON.stringify(path + ".tmp")}, "w") as f: f.write(${value})\n${indent}os.replace(${JSON.stringify(path + ".tmp")}, ${JSON.stringify(path)})`;
+}
+
 async function main() {
   const dir = mkdtempSync(join(tmpdir(), "l10-g1-"));
+  assert.ok(PYTHON_ABS, "absolute Python interpreter must resolve for fixtures");
+  mkdirSync(join(dir, ".claude"), { mode: 0o700 });
+  writeFileSync(join(dir, ".claude", "settings.json"), "{}\n");
+  // The production builder derives CONTROL HOME from userInfo, not $HOME.
+  const originalUserInfo = os.userInfo;
+  os.userInfo = (() => ({ ...originalUserInfo(), homedir: dir })) as typeof os.userInfo;
+  syncBuiltinESMExports();
   const runnerUid = typeof process.getuid === "function" ? process.getuid() : 501;
   const runnerPid = process.pid;
   const runnerPgid = getRunnerPgid();
@@ -869,7 +898,7 @@ async function main() {
           mkdirSync(pDir, { recursive: true });
           const pidFile = join(pDir, "fixture.pid");
           const pyScript = join(pDir, "fixture.py");
-          writeFileSync(pyScript, `import os, time, sys\nwith open(sys.argv[1], 'w') as f:\n    f.write(str(os.getpid()))\ntime.sleep(30)\n`);
+          writeFileSync(pyScript, `import os, time, sys\nwith open(sys.argv[1] + '.tmp', 'w') as f:\n    f.write(str(os.getpid()))\nos.replace(sys.argv[1] + '.tmp', sys.argv[1])\ntime.sleep(30)\n`);
 
           const baseOpts = {
             argv: [PYTHON_ABS, pyScript, pidFile],
@@ -893,8 +922,8 @@ async function main() {
 
           // Assert owned fixture was killed by the REAL path:
           assert.ok(existsSync(pidFile), "fixture pidFile must exist");
-          const fixturePid = Number(readFileSync(pidFile, "utf8"));
-          assert.ok(fixturePid > 0, "fixturePid must be positive");
+          const fixturePid = readFixturePid(pidFile);
+          assert.ok(fixturePid !== null, "fixturePid must be a positive safe integer");
           const dead = await waitForExit(fixturePid, 2000);
           assert.equal(dead, true, "spawnL10Child PROXY_HIDDEN: fixture was killed by real kill path");
         } else {
@@ -982,7 +1011,7 @@ worker = os.fork()
 if worker == 0:
     null = os.open("/dev/null", os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    open(${JSON.stringify(readyFile)}, "w").close()
+${pythonPublish(readyFile, '""', "    ")}
     while not os.path.exists(${JSON.stringify(goFile)}):
         if time.time() >= deadline: sys.exit(1)
         time.sleep(0.001)
@@ -991,15 +1020,14 @@ if worker == 0:
         os.setpgid(0, 0)
         null = os.open("/dev/null", os.O_RDWR)
         for fd in [0, 1, 2]: os.dup2(null, fd)
-        with open(${JSON.stringify(gcPidFile)}, "w") as f:
-            f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "        ")}
         while time.time() < deadline:
             time.sleep(0.5)
         sys.exit(0)
     while not os.path.exists(${JSON.stringify(gcPidFile)}):
         if time.time() >= deadline: sys.exit(1)
         time.sleep(0.001)
-    open(${JSON.stringify(workerDoneFile)}, "w").close()
+${pythonPublish(workerDoneFile, '""', "    ")}
     while time.time() < deadline:
         time.sleep(0.5)
     sys.exit(0)
@@ -1023,15 +1051,12 @@ os._exit(0)
               while (!existsSync(readyFile) && Date.now() - start < 5000) {
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
               }
-              writeFileSync(goFile, "go");
+              publishFixtureFile(goFile, "go");
               while (Date.now() - start < 5000) {
-                if (existsSync(gcPidFile)) {
-                  const raw = readFileSync(gcPidFile, "utf8").trim();
-                  const pid = parseInt(raw, 10);
-                  if (pid > 0) {
-                    observedGcPid = pid;
-                    break;
-                  }
+                const pid = readFixturePid(gcPidFile);
+                if (pid !== null) {
+                  observedGcPid = pid;
+                  break;
                 }
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
               }
@@ -1045,7 +1070,7 @@ os._exit(0)
         syncBuiltinESMExports();
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           const res = await spawnClaudeL10ChildForTest({
@@ -1096,8 +1121,8 @@ os._exit(0)
 
           return { res, observedGcPid, isDead, reacquired };
         } finally {
-          try { writeFileSync(goFile, "go"); } catch {}
-          try { writeFileSync(workerDoneFile, "done"); } catch {}
+          try { publishFixtureFile(goFile, "go"); } catch {}
+          try { publishFixtureFile(workerDoneFile, "done"); } catch {}
           cp.execFileSync = originalExecFileSync;
           syncBuiltinESMExports();
           if (observedGcPid > 0) {
@@ -1329,8 +1354,7 @@ p = os.fork()
 if p == 0:
     null = os.open('/dev/null', os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(gcPidFile)}, 'w') as f:
-        f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "    ")}
     time.sleep(30)
     sys.exit(0)
 time.sleep(30)
@@ -1343,7 +1367,7 @@ sys.exit(0)
         let observerCalls = 0;
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           await spawnClaudeL10ChildForTest({
@@ -1357,11 +1381,7 @@ sys.exit(0)
             runId: opts.runName,
             permitPool: pool,
             onSnapshot: (phase, _pids) => {
-              if (existsSync(gcPidFile) && observedGcPid === 0) {
-                const raw = readFileSync(gcPidFile, "utf8").trim();
-                const p = parseInt(raw, 10);
-                if (p > 0) observedGcPid = p;
-              }
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (phase === "exit") {
                 observerCalls++;
                 if (opts.throwObserver) {
@@ -1451,8 +1471,7 @@ p = os.fork()
 if p == 0:
     null = os.open('/dev/null', os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(gcPidFile)}, 'w') as f:
-        f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "    ")}
     time.sleep(30)
     sys.exit(0)
 time.sleep(0.15)
@@ -1465,7 +1484,7 @@ sys.exit(0)
         let caughtErr: any = null;
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           res = await spawnClaudeL10ChildForTest({
@@ -1479,11 +1498,7 @@ sys.exit(0)
             runId: "exit-coercion",
             permitPool: pool,
             onSnapshot: (phase, _pids) => {
-              if (existsSync(gcPidFile) && observedGcPid === 0) {
-                const raw = readFileSync(gcPidFile, "utf8").trim();
-                const p = parseInt(raw, 10);
-                if (p > 0) observedGcPid = p;
-              }
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (phase === "exit") {
                 throw {
                   toString() {
@@ -1555,8 +1570,7 @@ p = os.fork()
 if p == 0:
     null = os.open('/dev/null', os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(gcPidFile)}, 'w') as f:
-        f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "    ")}
     time.sleep(30)
     sys.exit(0)
 time.sleep(30)
@@ -1574,7 +1588,7 @@ sys.exit(0)
         let caughtErr: any = null;
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           await spawnClaudeL10ChildForTest({
@@ -1588,11 +1602,7 @@ sys.exit(0)
             runId: "poller-coercion",
             permitPool: pool,
             onSnapshot: (phase, _pids) => {
-              if (existsSync(gcPidFile) && observedGcPid === 0) {
-                const raw = readFileSync(gcPidFile, "utf8").trim();
-                const p = parseInt(raw, 10);
-                if (p > 0) observedGcPid = p;
-              }
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (phase === "poller") {
                 throw {
                   toString() {
@@ -1665,8 +1675,7 @@ p = os.fork()
 if p == 0:
     null = os.open('/dev/null', os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(gcPidFile)}, 'w') as f:
-        f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "    ")}
     time.sleep(30)
     sys.exit(0)
 time.sleep(0.15)
@@ -1679,7 +1688,7 @@ sys.exit(0)
         let caughtErr: any = null;
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           res = await spawnClaudeL10ChildForTest({
@@ -1693,11 +1702,7 @@ sys.exit(0)
             runId: "exit-proto",
             permitPool: pool,
             onSnapshot: (phase, _pids) => {
-              if (existsSync(gcPidFile) && observedGcPid === 0) {
-                const raw = readFileSync(gcPidFile, "utf8").trim();
-                const p = parseInt(raw, 10);
-                if (p > 0) observedGcPid = p;
-              }
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (phase === "exit") {
                 throw new Proxy({}, {
                   getPrototypeOf() {
@@ -1768,8 +1773,7 @@ p = os.fork()
 if p == 0:
     null = os.open('/dev/null', os.O_RDWR)
     for fd in [0, 1, 2]: os.dup2(null, fd)
-    with open(${JSON.stringify(gcPidFile)}, 'w') as f:
-        f.write(str(os.getpid()))
+${pythonPublish(gcPidFile, "str(os.getpid())", "    ")}
     time.sleep(30)
     sys.exit(0)
 time.sleep(30)
@@ -1787,7 +1791,7 @@ sys.exit(0)
         let caughtErr: any = null;
 
         const parentFixture = join(poleDir, "claude-parent");
-        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS ?? "/usr/local/bin/python"}" "${parentPy}" "$@"\n`, { mode: 0o755 });
+        writeFileSync(parentFixture, `#!/bin/sh\nexec "${PYTHON_ABS}" "${parentPy}" "$@"\n`, { mode: 0o755 });
 
         try {
           await spawnClaudeL10ChildForTest({
@@ -1801,11 +1805,7 @@ sys.exit(0)
             runId: "poller-proto",
             permitPool: pool,
             onSnapshot: (phase, _pids) => {
-              if (existsSync(gcPidFile) && observedGcPid === 0) {
-                const raw = readFileSync(gcPidFile, "utf8").trim();
-                const p = parseInt(raw, 10);
-                if (p > 0) observedGcPid = p;
-              }
+              if (observedGcPid === 0) observedGcPid = readFixturePid(gcPidFile) ?? 0;
               if (phase === "poller") {
                 throw new Proxy({}, {
                   getPrototypeOf() {
@@ -3276,11 +3276,11 @@ sys.exit(0)
       assert.ok(mutantTViols.length > 0, "Mutant T: satisfies expression namespace alias must fail check");
       assert.ok(mutantTViols.some((v) => v.includes("computed element access on forTest namespace alias")), "Mutant T: must flag alias element access");
 
-      // MUTANT U (Item C Pole): computed key on l10-limits namespace outside l10-process (the R16-P2-3 note)
-      const mutantUCode = `import * as p from "./l10-limits"; const k="resetL10TrialCounterForTest"; p[k]({bypass:true});`;
+      // MUTANT U (Item C Pole): computed key on config namespace outside l10-process (the R16-P2-3 note)
+      const mutantUCode = `import * as p from "./config"; const k="_setL10BinariesForTest"; p[k]();`;
       const mutantUViols = checkSourceAst("production-file-fixture.ts", mutantUCode);
-      assert.ok(mutantUViols.length > 0, "CONTROL: computed key on l10-limits namespace must fail check");
-      assert.ok(mutantUViols.some((v) => v.includes("computed element access on forTest namespace")), "CONTROL: must flag computed key on l10-limits");
+      assert.ok(mutantUViols.length > 0, "CONTROL: computed key on config namespace must fail check");
+      assert.ok(mutantUViols.some((v) => v.includes("computed element access on forTest namespace")), "CONTROL: must flag computed key on config");
 
       // MUTANT: pre-fix checker reported 0 violations because it only tracked specifier.includes("l10-process")
       const preFixChecker = (code: string): string[] => {
@@ -3305,7 +3305,7 @@ sys.exit(0)
         });
         return viols;
       };
-      assert.equal(preFixChecker(mutantUCode).length, 0, "MUTANT: pre-fix checker reported 0 violations on l10-limits namespace");
+      assert.equal(preFixChecker(mutantUCode).length, 0, "MUTANT: pre-fix checker reported 0 violations on config namespace");
 
       // Item C / R17-P2-2 fixture-spawner exemption poles:
       // spawnClaudeL10ChildForTest is admitted ONLY in exact seam files,
@@ -3340,6 +3340,8 @@ sys.exit(0)
 
     console.log("PASS G1: kill-set guard validates planned set before first signal; Case 1 (foreign UID / forced ownership refusal + fixture control); Case 2 (over-cap >32 refusal + 32-cap control); Case 3 (runner pid/sid/pgid refusal + safe control); C1 identity re-check retry poles (CONTROL, MUTANT 1, MUTANT 2, MUTANT 3, inner path); N1 group-signal guard poles (outer and inner CONTROL, MUTANT 1, MUTANT 2, MUTANT 3); AST import check poles (CONTROL 63 files, MUTANT A namespace, MUTANT B dynamic, MUTANT C multi-line call, MUTANT D renamed); binding hold tripwire enforced.");
   } finally {
+    os.userInfo = originalUserInfo;
+    syncBuiltinESMExports();
     try { assertNoSurvivingProcessesForDir(dir); } catch (e) { console.error(e); throw e; }
     try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }

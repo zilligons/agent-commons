@@ -293,7 +293,7 @@ if [ "${ROUTE}" = "codex" ] && [ -z "$CODEX_HOME" ]; then
   exit 76
 fi
 NOW_SEC=$(date +%s)
-echo "{\\"ts\\":$NOW_SEC,\\"pid\\":$$,\\"lane\\":\\"max\\",\\"seat\\":\\"${SEAT_TOKEN}\\",\\"req\\":\\"${targetLiteral}\\",\\"eff\\":\\"${targetLiteral}\\"}" >> "${fixtureLedger}"
+echo "{\\"ts\\":$NOW_SEC,\\"pid\\":$$,\\"lane\\":\\"max\\",\\"seat\\":\\"$SEAT_TOKEN\\",\\"req\\":\\"${targetLiteral}\\",\\"eff\\":\\"${targetLiteral}\\"}" >> "${fixtureLedger}"
 if [ "${ROUTE}" = "claude" ]; then
   echo "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"READY\\",\\"session_id\\":\\"s\\",\\"usage\\":{\\"input_tokens\\":10,\\"output_tokens\\":5},\\"modelUsage\\":{\\"${targetLiteral}\\":{\\"inputTokens\\":10,\\"outputTokens\\":5}}}"
 else

@@ -8,20 +8,25 @@
  * 1. Unknown adapter name → throws AdapterFailure("MODEL_UNAVAILABLE", "adapter not registered")
  *    BEFORE any process spawn. No fallback to another adapter, ever.
  * 2. AGENT_COMMONS_OFFLINE=1 refuses any adapter with makesLiveCalls: true.
- * 3. `preview-bridge` is the default adapter (no config, no env) and is the
- *    unchanged spawn of `python server/cohort_bridge.py`.
+ * 3. All founding slots default to their frozen metered provider adapters.
  *
  */
 import { AdapterFailure, type ModelAdapter } from "./types";
 import { PreviewBridgeAdapter } from "./preview_bridge";
 import { StubAdapter } from "./stub";
 import { L10CliAdapter } from "./l10-cohort";
+import { OpenAIResponsesAdapter } from "./openai_responses";
+import { AnthropicMessagesAdapter } from "./anthropic_messages";
+import { GoogleGeminiAdapter } from "./google_gemini";
 
 const ADAPTERS: ReadonlyMap<string, () => ModelAdapter> = Object.freeze(
   new Map<string, () => ModelAdapter>([
     ["preview-bridge", () => new PreviewBridgeAdapter()],
     ["stub", () => new StubAdapter()],
     ["l10-cli", () => new L10CliAdapter()],
+    ["openai-responses", () => new OpenAIResponsesAdapter()],
+    ["anthropic-messages", () => new AnthropicMessagesAdapter()],
+    ["google-gemini", () => new GoogleGeminiAdapter()],
   ]),
 );
 

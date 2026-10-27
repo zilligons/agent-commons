@@ -14,6 +14,11 @@ function main() {
   assert.ok(KNOWN_ADAPTERS.includes("preview-bridge"), "preview-bridge must be registered");
   assert.ok(KNOWN_ADAPTERS.includes("stub"), "stub must be registered");
   assert.ok(KNOWN_ADAPTERS.includes("l10-cli"), "l10-cli must be registered");
+  assert.ok(KNOWN_ADAPTERS.includes("openai-responses"), "openai-responses must be registered");
+  assert.ok(KNOWN_ADAPTERS.includes("anthropic-messages"), "anthropic-messages must be registered");
+  assert.ok(KNOWN_ADAPTERS.includes("google-gemini"), "google-gemini must be registered");
+  assert.ok(!KNOWN_ADAPTERS.includes("xai-responses"), "retired xai-responses must not be registered");
+  assert.throws(() => resolveAdapter("xai-responses"), (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE");
 
   // CONTROL — stub adapter resolves without OFFLINE flag.
   const prev = process.env.AGENT_COMMONS_OFFLINE;
@@ -41,6 +46,12 @@ function main() {
         && e.code === "MODEL_UNAVAILABLE"
         && /AGENT_COMMONS_OFFLINE=1/.test(e.message);
     }, "l10-cli must be refused under AGENT_COMMONS_OFFLINE=1");
+    assert.throws(() => resolveAdapter("openai-responses"), (e: unknown) => {
+      return e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE";
+    }, "openai-responses must be refused under AGENT_COMMONS_OFFLINE=1");
+    for (const name of ["anthropic-messages", "google-gemini"]) assert.throws(() => resolveAdapter(name), (e: unknown) => {
+      return e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE";
+    }, "provider adapters must be refused under AGENT_COMMONS_OFFLINE=1");
   } finally {
     if (prev === undefined) delete process.env.AGENT_COMMONS_OFFLINE;
     else process.env.AGENT_COMMONS_OFFLINE = prev;

@@ -79,6 +79,17 @@ function makeClaudeFixture(targetDir: string, nameOrContent: string, maybeConten
   return p;
 }
 
+function snapshotGatedPython(goFile: string): string {
+  return `#!${PYTHON_ABS}
+import os, sys, time
+deadline = time.monotonic() + 10
+while not os.path.exists(${JSON.stringify(goFile)}):
+    if time.monotonic() >= deadline: sys.exit(1)
+    time.sleep(0.001)
+sys.exit(0)
+`;
+}
+
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -429,7 +440,9 @@ try {
     assert.ok(sibling.pid, "sibling process started in runner process group");
     try {
       const sibPool = new L10PermitPool(join(dir, "sib-permits"), 1);
-      const sibClaude = makeClaudeFixture(dir, "#!/bin/sh\nsleep 0.02\nexit 0\n");
+      const sibExitFile = join(dir, "sibling-control-exit");
+      let sibSnapshots = 0;
+      const sibClaude = makeClaudeFixture(dir, snapshotGatedPython(sibExitFile));
       await spawnClaudeL10ChildForTest({
         argv: [sibClaude, ...fullClaudeArgs],
         cwd: dir,
@@ -439,7 +452,11 @@ try {
         cancelSignal: { cancelled: () => false },
         runId: "sibling-control",
         permitPool: sibPool,
-      });
+        onSnapshot: (phase) => {
+          if (phase === "poller" && ++sibSnapshots >= 2) publishFixtureFile(sibExitFile, "go");
+        },
+      }).finally(() => publishFixtureFile(sibExitFile, "go"));
+      assert.ok(sibSnapshots >= 2, "Sibling CONTROL child exits only after two poller snapshots");
 
       // Sibling in the runner's group must survive teardown
       let siblingAlive = false;
@@ -495,7 +512,9 @@ else:
     mkdirSync(lateDir, { recursive: true });
     const lateChildEnv = buildChildEnv({ route: "claude", runId: "late-sib", home: dir, runDir: lateDir });
     const latePool = new L10PermitPool(join(dir, "late-permits"), 1);
-    const lateClaude = makeClaudeFixture(dir, "#!/bin/sh\nsleep 0.2\nexit 0\n");
+    const lateExitFile = join(lateDir, "parent-exit");
+    let lateSnapshots = 0;
+    const lateClaude = makeClaudeFixture(dir, snapshotGatedPython(lateExitFile));
 
     const adapterPromise = spawnClaudeL10ChildForTest({
       argv: [lateClaude, ...fullClaudeArgs],
@@ -506,6 +525,9 @@ else:
       cancelSignal: { cancelled: () => false },
       runId: "late-sibling-adapter",
       permitPool: latePool,
+      onSnapshot: (phase) => {
+        if (phase === "poller" && ++lateSnapshots >= 2) publishFixtureFile(lateExitFile, "go");
+      },
     });
 
     // Spawn an unrelated late sibling directly from parent AFTER adapter child starts,
@@ -518,6 +540,7 @@ else:
 
     try {
       await adapterPromise;
+      assert.ok(lateSnapshots >= 2, "Late-sibling CONTROL child exits only after two poller snapshots");
 
       // Late unrelated sibling sharing TMPDIR MUST survive teardown
       let lateSiblingAlive = false;
@@ -527,6 +550,7 @@ else:
       } catch {}
       assert.equal(lateSiblingAlive, true, "R4c POLE: unrelated late sibling sharing TMPDIR survives adapter teardown");
     } finally {
+      publishFixtureFile(lateExitFile, "go");
       try { process.kill(lateSibling.pid!, "SIGKILL"); } catch {}
     }
 
@@ -537,7 +561,9 @@ else:
     {
       const normalPool = new L10PermitPool(join(dir, "r4b-normal-permits"), 1);
       const normalEnv = buildChildEnv({ route: "claude", runId: "r4b-normal", home: dir, runDir: dir });
-      const normClaude = makeClaudeFixture(dir, "#!/bin/sh\nsleep 0.2\nexit 0\n");
+      const normalExitFile = join(dir, "r4b-normal-exit");
+      let normalSnapshots = 0;
+      const normClaude = makeClaudeFixture(dir, snapshotGatedPython(normalExitFile));
       const res = await spawnClaudeL10ChildForTest({
         argv: [normClaude, ...fullClaudeArgs],
         cwd: dir,
@@ -547,7 +573,11 @@ else:
         cancelSignal: { cancelled: () => false },
         runId: "r4b-normal",
         permitPool: normalPool,
-      });
+        onSnapshot: (phase) => {
+          if (phase === "poller" && ++normalSnapshots >= 2) publishFixtureFile(normalExitFile, "go");
+        },
+      }).finally(() => publishFixtureFile(normalExitFile, "go"));
+      assert.ok(normalSnapshots >= 2, "Normal CONTROL child exits only after two poller snapshots");
       assert.ok(res.childPid, "R4b CONTROL: normal child completed successfully");
 
       // Verify permit is released and re-acquirable
@@ -560,7 +590,9 @@ else:
     {
       const gapPool = new L10PermitPool(join(dir, "r4b-gap-permits"), 1);
       const gapEnv = buildChildEnv({ route: "claude", runId: "r4b-gap", home: dir, runDir: dir });
-      const gapFixture = makeClaudeFixture(dir, "r4b-gap-claude", `#!/bin/sh\nsleep 0.2\n`);
+      const gapExitFile = join(dir, "r4b-gap-exit");
+      let gapSnapshots = 0;
+      const gapFixture = makeClaudeFixture(dir, "r4b-gap-claude", snapshotGatedPython(gapExitFile));
       let gapFailure: any = null;
       try {
         await spawnClaudeL10ChildForTest({
@@ -573,10 +605,16 @@ else:
           runId: "r4b-gap",
           permitPool: gapPool,
           maxSnapshotGapMs: 1, // bound of 1ms will be exceeded by ps execution
+          onSnapshot: (phase) => {
+            if (phase === "poller" && ++gapSnapshots >= 2) publishFixtureFile(gapExitFile, "go");
+          },
         });
       } catch (e: any) {
         gapFailure = e;
+      } finally {
+        publishFixtureFile(gapExitFile, "go");
       }
+      assert.ok(gapSnapshots >= 2, "Snapshot-gap negative pole exits only after two poller snapshots");
       assert.ok(gapFailure, "R4b MUTANT: gap exceeding bound must fail");
       assert.equal(gapFailure.code, "TEARDOWN_UNCONFIRMED", "R4b MUTANT: must throw TEARDOWN_UNCONFIRMED");
       assert.ok(gapFailure.message.includes("snapshot gap"), "R4b MUTANT: message must mention snapshot gap");

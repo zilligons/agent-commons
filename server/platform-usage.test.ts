@@ -7,6 +7,7 @@ import { L10AccountingStore } from "./adapters/l10-accounting-store";
 import { L10AccountingService } from "./adapters/l10-accounting";
 import { SQLitePlatformSpending } from "./adapters/platform-spending";
 import { markAccountingDispatchStarted } from "./adapters/l10-admission";
+import { verifiedPrice } from "./adapters/platform-pricing";
 
 if (!process.env.NODE_TEST_CONTEXT) process.exit(64);
 await import("./offline-test-home.mjs");
@@ -45,7 +46,11 @@ test("future live cohort entries sign exact accounting links while preserving ol
   const db = new DatabaseSync(":memory:"); t.after(() => db.close());
   const store = new L10AccountingStore(db);
   let cohort: InstanceType<typeof CohortConsole>;
-  const policy = new SQLitePlatformSpending(store, { env: {}, history: () => cohort?.state.entries ?? [] });
+  // The verified price table is dated and expires; this test is about accounting links, so it reads the
+  // unchanged table at an instant inside the table's validity window (the spending tests own the expiry).
+  const quotedAt = Date.parse("2026-10-27T12:00:00-07:00");
+  const policy = new SQLitePlatformSpending(store, { env: {}, price: model => verifiedPrice(model, quotedAt),
+    history: () => cohort?.state.entries ?? [] });
   const accounting = new L10AccountingService(store, { spending: policy });
   cohort = new CohortConsole(accounting);
   cohort.append("governance", "build", "Prior offline fixture", "stub adapter (offline fixture)");

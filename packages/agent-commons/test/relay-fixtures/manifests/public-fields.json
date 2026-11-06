@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "source": "spec v3.3 (4bac8d6) N22 and RT2 note O-b: every field allowed to hold a 64-hex value (v3.3 adds the verdict chain and attestation hashes)",
+  "columns": [
+    "keys.public_key", "invites.secret_sha256", "owner_record_outbox.line_sha256", "submission_details.body_sha256",
+    "verify_results.patch_sha256", "member_records.record_sha256", "mailbox.body_sha256", "logs.prev", "logs.hash",
+    "approvals.prev", "approvals.body_sha256", "served_by_attestations.body_sha256", "served_by_attestations.tool_sha256", "request_nonces.nonce"
+  ],
+  "json_keys": [
+    "public_key", "body_sha256", "patch_sha256", "log_sha256", "line_sha256", "record_sha256", "sha256", "image_digest", "prev", "hash", "tool_sha256"
+  ]
+}

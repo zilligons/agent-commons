@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "source": "spec v3.2 (7311db1) N22: every place data leaves or rests",
+  "l0": ["relay.db file", "relay.db-wal file", "relay.db-shm file", "exportRelay", "renderSeatFeed", "readInbox page", "ownClaims", "boardView", "member receipts", "alerts"],
+  "l1_only": ["seed bundle", "HTTP responses", "seat CLI output"]
+}

@@ -1,0 +1,188 @@
+{
+  "v": 1,
+  "source": "spec v3.2 (7311db1) sections 7.1, 7.2, 6.5, 11.1, 12.1; hand-written, not generated from the code",
+  "kb": 1024,
+  "record_caps": {
+    "record": 65536,
+    "result": 262144,
+    "enrollment": 4096
+  },
+  "member": {
+    "heartbeat": [],
+    "message": [
+      {
+        "field": "text",
+        "cap": 8192,
+        "source": "7.2"
+      }
+    ],
+    "claim": [],
+    "release": [],
+    "progress": [
+      {
+        "field": "text",
+        "cap": 2048,
+        "source": "7.2"
+      }
+    ],
+    "result": [
+      {
+        "field": "body(report)",
+        "cap": 65536,
+        "source": "L0 choice: the spec gives the 64 KB record cap only"
+      },
+      {
+        "field": "body[].path",
+        "cap": 512,
+        "source": "L0 choice: spec silent"
+      },
+      {
+        "field": "body[].diff",
+        "cap": 262144,
+        "source": "12.1"
+      }
+    ],
+    "evidence": [
+      {
+        "field": "text",
+        "cap": 16384,
+        "source": "7.2"
+      }
+    ],
+    "review-request": [],
+    "propose": [
+      {
+        "field": "title",
+        "cap": 120,
+        "source": "7.2 (L0 counts UTF-8 bytes)"
+      },
+      {
+        "field": "description",
+        "cap": 4096,
+        "source": "7.2"
+      },
+      {
+        "field": "acceptance",
+        "cap": 4096,
+        "source": "L0 choice: spec silent"
+      }
+    ],
+    "advisory-review": [
+      {
+        "field": "text",
+        "cap": 4096,
+        "source": "7.2"
+      }
+    ],
+    "note": [
+      {
+        "field": "text",
+        "cap": 4096,
+        "source": "7.2"
+      }
+    ]
+  },
+  "fleet": {
+    "task.open": [
+      {
+        "field": "args.title",
+        "cap": 120,
+        "source": "11.1"
+      },
+      {
+        "field": "args.description",
+        "cap": 4096,
+        "source": "11.1"
+      },
+      {
+        "field": "args.paths[]",
+        "cap": 512,
+        "source": "L0 choice: spec silent"
+      },
+      {
+        "field": "args.acceptance.criteria",
+        "cap": 4096,
+        "source": "L0 choice: spec silent"
+      },
+      {
+        "field": "args.acceptance.required_checks[]",
+        "cap": 512,
+        "source": "L0 choice: spec silent"
+      }
+    ],
+    "message": [
+      {
+        "field": "text",
+        "cap": 8192,
+        "source": "L0 choice: mirrors the member message cap"
+      }
+    ],
+    "finding.open": [
+      {
+        "field": "summary",
+        "cap": 4096,
+        "source": "L0 choice: section 10 names no finding record"
+      }
+    ],
+    "finding.close": [
+      {
+        "field": "resolution",
+        "cap": 4096,
+        "source": "L0 choice: section 10 names no finding record"
+      }
+    ],
+    "every-fleet-record": [
+      {
+        "field": "served_by",
+        "cap": 200,
+        "source": "L0 choice: R3 requires it, spec gives no cap"
+      }
+    ],
+    "invite.create": [
+      {
+        "field": "args.intended_display_name",
+        "cap": 64,
+        "source": "5.1"
+      },
+      {
+        "field": "args.intended_platform",
+        "cap": 64,
+        "source": "5.1"
+      }
+    ],
+    "served_by.attest": [
+      {
+        "field": "session_id",
+        "cap": 128,
+        "source": "L0 choice: 9.8 gives no cap"
+      },
+      {
+        "field": "record_uuid",
+        "cap": 128,
+        "source": "L0 choice: 9.8 gives no cap"
+      },
+      {
+        "field": "response_model",
+        "cap": 128,
+        "source": "L0 choice: 9.8 gives no cap"
+      },
+      {
+        "field": "family",
+        "cap": 128,
+        "source": "L0 choice: 9.8 gives no cap"
+      },
+      {
+        "field": "turn_models[]",
+        "cap": 128,
+        "source": "L0 choice: 9.8 gives no cap"
+      }
+    ],
+    "rebind.cancel": [
+      {
+        "field": "args.reason",
+        "cap": 128,
+        "source": "the D items, D3"
+      }
+    ]
+  }
+}

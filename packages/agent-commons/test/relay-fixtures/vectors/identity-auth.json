@@ -1,0 +1,122 @@
+{
+  "note": "Regenerated test vector (make-identity-auth-vector.mjs; fixture key). The identity key derives the agent's address: uuaid:<namespace>:agent:<first 16 bytes of sha256(public key), as a UUID>. Rebuild the descriptor from the request; verify the header's Ed25519 signature (RFC 8032, prime-order key) over UTF-8(\"uuaid.identity.request.v1\\n\" + JCS(descriptor)) with public_key. Each mutation MUST fail.",
+  "request": {
+    "method": "POST",
+    "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+    "query": "",
+    "body": {
+      "enrolment": {
+        "payload": {
+          "type": "example-enrolment/1",
+          "aud": "https://api.uuaid.org",
+          "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+          "label": "fixture agent",
+          "keys": 2,
+          "created": "2026-11-06T12:00:00.000Z",
+          "nonce": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+        }
+      }
+    }
+  },
+  "header": "v=1; created=2026-11-06T12:00:00.000Z; nonce=00112233445566778899aabbccddeeff; ed25519=1f9c95be64e0bedb53df987dc852140799a3dcabbef7a2544f8e0ec4c1df801ee837f2b571eabe3289a54a339f6110414434e4b4a5f9f9f7d044c4114798fc04",
+  "public_key": "0c452819b3f0be95968d7be41f8b2cf15ee97126b3ab14025e7b18cf4279bc90",
+  "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+  "expected_descriptor": {
+    "type": "uuaid.identity.request.v1",
+    "aud": "https://api.uuaid.org",
+    "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+    "method": "POST",
+    "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+    "query": "",
+    "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+    "created": "2026-11-06T12:00:00.000Z",
+    "nonce": "00112233445566778899aabbccddeeff"
+  },
+  "expected_signed_string": "uuaid.identity.request.v1\n{\"agent\":\"uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186\",\"aud\":\"https://api.uuaid.org\",\"body_sha256\":\"5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582\",\"created\":\"2026-11-06T12:00:00.000Z\",\"method\":\"POST\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"path\":\"/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet\",\"query\":\"\",\"type\":\"uuaid.identity.request.v1\"}",
+  "must_fail": [
+    {
+      "change": "method",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://api.uuaid.org",
+        "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "PUT",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+        "query": "",
+        "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    },
+    {
+      "change": "path",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://api.uuaid.org",
+        "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "POST",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/registration",
+        "query": "",
+        "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    },
+    {
+      "change": "body",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://api.uuaid.org",
+        "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "POST",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+        "query": "",
+        "body_sha256": "19c168f01bef0c0f24d9c725682d8f72c03ee9d40795fb0e165ee000fe1157d8",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    },
+    {
+      "change": "audience",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://evil.example",
+        "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "POST",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+        "query": "",
+        "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    },
+    {
+      "change": "agent",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://api.uuaid.org",
+        "agent": "uuaid:agentnet:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "POST",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+        "query": "",
+        "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    },
+    {
+      "change": "query",
+      "descriptor": {
+        "type": "uuaid.identity.request.v1",
+        "aud": "https://api.uuaid.org",
+        "agent": "uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186",
+        "method": "POST",
+        "path": "/agents/uuaid:pillar:agent:43adc334-21ce-9635-7267-303a7fc50186/wallet",
+        "query": "x=1",
+        "body_sha256": "5c2412208ba0b0af153a70f722da10957e03a4a73b25c8bd5dda42fc5cd55582",
+        "created": "2026-11-06T12:00:00.000Z",
+        "nonce": "00112233445566778899aabbccddeeff"
+      }
+    }
+  ]
+}

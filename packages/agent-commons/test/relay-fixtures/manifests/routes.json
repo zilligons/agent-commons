@@ -1,0 +1,378 @@
+{
+  "v": 1,
+  "source": "spec v3.4.6 (b44ce70) 6.5 endpoint inventory: the closed list; any other method or path is 404 before any authentication work",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/enroll",
+      "auth": "invite",
+      "principal": null,
+      "cap_bytes": 4096
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rekey",
+      "auth": "invite",
+      "principal": null,
+      "cap_bytes": 4096
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rebind",
+      "auth": "invite",
+      "principal": null,
+      "cap_bytes": 4096
+    },
+    {
+      "method": "GET",
+      "path": "/v1/status",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 0,
+      "pending_allowed": true
+    },
+    {
+      "method": "GET",
+      "path": "/v1/seed",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/inbox",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 0
+    },
+    {
+      "method": "POST",
+      "path": "/v1/inbox/ack",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 1024
+    },
+    {
+      "method": "GET",
+      "path": "/v1/claims",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/board",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 0
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/heartbeat",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/message",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/note",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/claim",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/release",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/progress",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/result",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 262144
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/evidence",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/review-request",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/propose",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/records/advisory-review",
+      "auth": "signed",
+      "principal": "member",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/invite.create",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/rebind.cancel",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/enroll.confirm",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/rekey.confirm",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/task.open",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/task.close",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/task.assign",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/claim.release",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/progress.accept",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/role.c1",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/clock.resume",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/review.changes",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/review.reject",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/decision.propose",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/verdict",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/served_by.attest",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/finding.open",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/finding.close",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/coauthor.declare",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/verify.result",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/security.approve",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/suspend",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/message",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/owner-record.confirm",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/freeze",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/veto",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "POST",
+      "path": "/v1/fleet/records/unfreeze",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 65536
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/alerts",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/queue",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/decisions",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/members",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/quarantine",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/v1/fleet/owner-outbox",
+      "auth": "signed",
+      "principal": "fleet",
+      "cap_bytes": 0
+    }
+  ]
+}

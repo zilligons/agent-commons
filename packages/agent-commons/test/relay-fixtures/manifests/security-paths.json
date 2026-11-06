@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "source": "spec v3.2 (7311db1) section 12.3 categories, made concrete for this repository; L1 moves this list into the owner-signed policy file",
+  "paths": [
+    "packages/agent-commons/src/relay/", "packages/agent-commons/src/vendor/", "packages/agent-commons/src/trust.mjs",
+    "packages/agent-commons/src/carrier.mjs", "packages/agent-commons/src/transport.mjs", "packages/agent-commons/src/pillar.mjs",
+    "packages/agent-commons/src/uuaid-namespace.mjs", "packages/agent-commons/src/channels.mjs", "packages/agent-commons/src/governance",
+    "packages/agent-commons/src/spaces/", "packages/agent-commons/src/config.mjs", "packages/agent-commons/bin/",
+    ".github/", "server/operator.ts", "server/http-security.ts", "server/listen_host.ts", "server/adapters/provider_credentials.ts"
+  ]
+}

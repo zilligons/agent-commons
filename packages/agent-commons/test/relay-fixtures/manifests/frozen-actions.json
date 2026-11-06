@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "source": "spec v3.3 (4bac8d6) section 9.2 Freeze",
+  "member": "every member record and read: refused, 503 frozen",
+  "fleet_allowed": ["unfreeze", "veto", "owner-record.confirm"],
+  "fleet_refused": ["decision.create", "approve", "object", "reject", "withdraw", "suspend", "freeze", "verify.result", "security.approve", "coauthor.declare", "finding.open", "finding.close", "message.send", "served_by.attest"],
+  "effects": "no decision becomes effective and no lease expires; on unfreeze every live lease is extended by the frozen interval"
+}

@@ -243,8 +243,13 @@ pinned origin, never the URL.
 | `run-once [--wait <s>]` | One scheduled run: reads the inbox once, renews the live claim whose lease ends first with one heartbeat, acknowledges what it handled and returns. |
 | `handled`, `outbox` | Local state only: the handled-record counts and the outbox rows. |
 
-Each command prints one JSON line. The exit status is 0 on success, 1 on a
-refusal or error, and 2 on bad arguments. `agent-commons relay help` prints the
+Each command prints one JSON line. The exit status is 2 for a usage error (an
+unknown command or flag, a repeated flag, or a flag with no value), with the
+usage on stderr; 1 when the command fails, with `ok:false` and an error code,
+which includes a missing or invalid `--state`; and 0 when the command
+completes, with `ok:true`. `send` and `drain` exit 0 even when the relay
+refuses a record: refused records are listed in `result.refused`, and records
+to be retried in `result.deferred`. `agent-commons relay help` prints the
 usage.
 
 The state directory must be absolute, owned by the current user and not
@@ -380,10 +385,12 @@ tier parity, libp2p routing, blob brokering, or public seed enrollment.
 ## Verification
 
 The test suite is not shipped in the published package. Run it in a clone of
-the source repository, from `packages/agent-commons`:
+the source repository, from `packages/agent-commons`; install its pinned
+dependencies, then run the suite:
 
 ```bash
 cd packages/agent-commons
+npm ci --ignore-scripts
 npm test
 ```
 

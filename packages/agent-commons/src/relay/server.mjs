@@ -1,27 +1,27 @@
-// Cloud Commons relay, L1: the HTTP API (spec v3.4.5 sections 6, 7.1, 7.4-7.6, 9.2 Freeze, 11.3, 11.5
-// and 13.2 "Test mode"; RT2 O12). Loopback and named test interfaces only; fixture keys only.
+// Cloud Commons relay: the HTTP API (spec v3.4.5 sections 6, 7.1, 7.4-7.6, 9.2 Freeze, 11.3, 11.5
+// and 13.2 "Test mode"). In test mode: loopback and named test interfaces only; fixture keys only.
 //
-// START (O12 item 1; section 15 "server.mjs"). The relay refuses to start unless BOTH hold:
-//   - `aud` is exactly the L1 test audience http://commons-relay.test:8080 (6.1, B5); and
+// START (section 15 "server.mjs"). The relay refuses to start unless BOTH hold:
+//   - `aud` is exactly the test audience http://commons-relay.test:8080 (6.1, B5); and
 //   - the bind is a literal loopback address (127.0.0.0/8 or ::1), or the address of the network
 //     interface named by --test-interface.
 // Anything else (a production aud, a wildcard such as 0.0.0.0 or ::, a host name, any other address)
 // exits with status 2 before any file or key is read, with or without --test-mode. It never warns and
-// carries on. --test-mode adds the clock and barrier files of test-mode.mjs (container-local, O12
-// item 2), loaded only then. No route reaches them: the 6.5 inventory is closed (O12 item 3).
-// RT3 MUST: the entrypoint of any non-test build must not carry --test-mode.
+// carries on. --test-mode adds the clock and barrier files of test-mode.mjs (container-local),
+// loaded only then. No route reaches them: the 6.5 inventory is closed.
+// Security invariant: the entrypoint of any non-test build must not carry --test-mode.
 //
-// PRODUCTION MODE (L2, -022 Addendum E P1; started only by serve.mjs, the `agent-commons relay serve`
+// PRODUCTION MODE (started only by serve.mjs, the `agent-commons relay serve`
 // command, which has no test flag at all). `mode: "production"` changes exactly three things:
 //   - `aud` is the configured https origin, in canonical form (https, no user, path, query, fragment,
-//     default port or trailing slash; lower-case host), never the L1 test audience or a `.test` host;
+//     default port or trailing slash; lower-case host), never the test audience or a `.test` host;
 //   - the bind is a literal loopback address only (the host's reverse proxy terminates TLS); no test
 //     interface, no test mode, no test directory;
 //   - the source address of every request is the `X-Real-IP` header the reverse proxy sets (exactly
 //     one, a valid IP, only from a loopback peer); a request without one is refused 400 invalid-source
 //     before any other work, the sweep included (11.3), so it changes no state, and the 5.2 per-IP caps
 //     never fall into one shared bucket.
-// Test mode (the default) is exactly the L1 behaviour above.
+// Test mode (the default) is exactly the START behaviour above.
 //
 // EVERY REQUEST, in this order (6.1 verifier order, 7.1 ingress order):
 //   0. production mode only: the source check (X-Real-IP); a request that fails it is refused 400
@@ -33,7 +33,7 @@
 //   4. 6.1 authentication and the 6.5 principal rules (routes.mjs admitRequest, auth.mjs);
 //   5. the 7.6 rate caps (members: per-member and global token buckets);
 //   6. the 9.2 freeze (member requests other than GET /v1/status get 503);
-//   7. the L0 handler (board, mailbox, governance) for the route;
+//   7. the record handler (board, mailbox, governance) for the route;
 //   8. one relay-signed response (6.2: commons-relay-sig on EVERY response, refusals included) and
 //      one source-metadata line (7.6).
 //
@@ -63,7 +63,7 @@ import * as G from "./governance.mjs";
 import { renderSeatFeed, renderMemberRecord } from "./render.mjs";
 import { openRelay } from "./roster.mjs";
 
-/** 7.6 defaults (open for tuning, O7). Fleet principals are roster-loaded and are not bucketed, so a member flood cannot starve a freeze or a suspension. */
+/** 7.6 defaults (open for tuning). Fleet principals are roster-loaded and are not bucketed, so a member flood cannot starve a freeze or a suspension. */
 export const RATE_LIMITS = Object.freeze({
   member: Object.freeze({ capacity: 20, perSecond: 1 }),
   global: Object.freeze({ capacity: 100, perSecond: 10 }),
@@ -97,9 +97,9 @@ export function bindAllowed(host, { testInterface } = {}) {
 }
 
 /**
- * L2: a production audience is one configured https origin in canonical form (it is compared byte for
+ * A production audience is one configured https origin in canonical form (it is compared byte for
  * byte, 6.1 B5): exactly `new URL(aud).origin`, so no user, path, query, fragment, default port or
- * trailing slash, and a lower-case host. Never the L1 test audience and never a `.test` host (RFC 6761).
+ * trailing slash, and a lower-case host. Never the test audience and never a `.test` host (RFC 6761).
  */
 export function isProductionAud(aud) {
   if (typeof aud !== "string" || aud.length > 256 || aud === RELAY_TEST_AUD) return false;
@@ -113,9 +113,9 @@ export function isProductionAud(aud) {
 export const MODES = Object.freeze(["test", "production"]);
 
 /**
- * O12 item 1: the conjunctive start refusal. Throws StartRefused unless the aud AND the bind are allowed.
- * mode "test" (default, L1): the test aud AND loopback or the named test interface.
- * mode "production" (L2): a production https aud AND a literal loopback bind; no test interface.
+ * The conjunctive start refusal. Throws StartRefused unless the aud AND the bind are allowed.
+ * mode "test" (default): the test aud AND loopback or the named test interface.
+ * mode "production": a production https aud AND a literal loopback bind; no test interface.
  */
 export function checkStart({ aud, host, testInterface, mode = "test" }) {
   const reasons = [];
@@ -130,7 +130,7 @@ export function checkStart({ aud, host, testInterface, mode = "test" }) {
   if (reasons.length) throw new StartRefused(reasons);
 }
 
-/** L2: the client address the reverse proxy reports in X-Real-IP (one header, a valid IP, from a loopback peer), or null. */
+/** The client address the reverse proxy reports in X-Real-IP (one header, a valid IP, from a loopback peer), or null. */
 export function proxiedSourceIp(req) {
   const peer = req.socket?.remoteAddress ?? "";
   const peerLoopback = isLoopback(peer) || /^::ffff:127\./.test(peer);
@@ -201,7 +201,7 @@ const DECISION_ROUTE = (type, b) =>
       : type === "suspend" ? b.class === "SUSPEND" && b.action === "suspend"
         : type === "decision.propose" ? ["D1", "D1R", "D2"].includes(b.class)
           : null;
-/** The other fleet records: each L0 handler checks its own record version, so another type's body is refused there. */
+/** The other fleet records: each record handler checks its own record version, so another type's body is refused there. */
 const RECORD_HANDLERS = Object.freeze({
   verdict: G.addVerdict, "served_by.attest": G.recordAttestation, "finding.open": G.openFinding, "finding.close": G.closeFinding,
   "coauthor.declare": G.declareCoauthor, "verify.result": G.recordVerifyResult, "security.approve": G.recordSecurityApproval,
@@ -404,7 +404,7 @@ export function createRelayHandler({ db, aud, relayKeySeedHex, clock = Date.now,
   async function serve(req, res, meta) {
     const now = clock();
     meta.at = now;
-    // L2 (spec 11.3): behind the reverse proxy the source is X-Real-IP. A production request without a
+    // Spec 11.3: behind the reverse proxy the source is X-Real-IP. A production request without a
     // valid one is refused here, before the sweep and before anything else: it reads and writes nothing.
     if (production && meta.ip === null) return { status: 400, body: { error: "invalid-source" }, close: true };
     // 11.3: a sweep runs on every request that passes the source check (in test mode, every request; the
@@ -465,7 +465,7 @@ export function createRelayHandler({ db, aud, relayKeySeedHex, clock = Date.now,
       const detail = error.message.startsWith(`${error.code}: `) ? error.message.slice(error.code.length + 2, error.code.length + 202) : null;
       return { status: error.status, body: detail ? { error: error.code, detail } : { error: error.code } };
     }
-    // A 9.3 trigger refusal that L0 did not name itself: its RAISE code, as a 409.
+    // A 9.3 trigger refusal that the handler did not name itself: its RAISE code, as a 409.
     if (error?.code === "ERR_SQLITE_ERROR" && error.errcode === 1811 && /^[a-z0-9][a-z0-9-]{1,63}$/.test(error.message)) return { status: 409, body: { error: error.message } };
     onError(error);
     return { status: 500, body: { error: "internal" } };
@@ -528,7 +528,7 @@ export function createRelayHandler({ db, aud, relayKeySeedHex, clock = Date.now,
 export async function startRelay({ db, aud, host, port = 0, testMode = false, testDir, testInterface, relayKeySeedHex, accessLog, onError,
   scheduler = { setInterval, clearInterval }, mode = "test" }) {
   checkStart({ aud, host, testInterface, mode });
-  // RT3: production mode never takes a test hook, whatever the caller passes.
+  // Security invariant: production mode never takes a test hook, whatever the caller passes.
   if (mode === "production" && (testMode !== false || testDir !== undefined)) throw new StartRefused(["production mode takes no test mode or test directory"]);
   if (!testMode && testDir !== undefined) throw new StartRefused(["--test-dir needs --test-mode"]);
   let hooks = null;
@@ -557,9 +557,9 @@ export async function startRelay({ db, aud, host, port = 0, testMode = false, te
   });
 }
 
-// --- command line (the L1 TEST entrypoint) -------------------------------------------------------
+// --- command line (the TEST entrypoint) ----------------------------------------------------------
 // The production entrypoint is serve.mjs (`agent-commons relay serve`); this one refuses any aud but the
-// L1 test aud (checkStart, mode "test").
+// test aud (checkStart, mode "test").
 // node src/relay/server.mjs --aud <aud> --bind <ip> [--port <n>] [--test-interface <name>]
 //   [--test-mode --test-dir <abs dir>] --db <relay*.db> --roster <file> --policy <file>
 //   --owner-public-key <64 hex> --relay-key-file <file, 0600, 64-hex seed> [--access-log <file>]
@@ -595,7 +595,7 @@ export async function main(argv = process.argv.slice(2), { stdout = process.stdo
   let relay, db;
   try {
     const o = parseArgs(argv);
-    // O12 item 1 first: nothing is read (no file, no key) before the aud and the bind pass.
+    // The start check first: nothing is read (no file, no key) before the aud and the bind pass.
     checkStart({ aud: o.aud, host: o.bind, testInterface: o["test-interface"] });
     const port = o.port === undefined ? 0 : /^(0|[1-9][0-9]{0,4})$/.test(o.port) && Number(o.port) <= 65535 ? Number(o.port) : NaN;
     if (Number.isNaN(port)) throw new StartRefused(["--port must be 0-65535"]);

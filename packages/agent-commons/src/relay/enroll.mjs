@@ -1,5 +1,5 @@
-// Cloud Commons relay, L1: the request side of the enrollment flows (spec v3.4.5 5.2, 5.3, 5.4; RD1,
-// RD2, RD3, M1, T-A2, B2, B3, B9; RT2 O-a; -022 Addendum C4: applyEnrollmentRequest leaves the tests).
+// Cloud Commons relay: the request side of the enrollment flows (spec v3.4.5 5.2, 5.3, 5.4; RD1,
+// RD2, RD3, M1, B2, B3, B9).
 //
 // POST /v1/enroll | /v1/rekey | /v1/rebind share one body and one descriptor (5.2, B2):
 //   body:       { invite_id, secret, member_id, public_key, agent, display_name, platform,
@@ -16,9 +16,9 @@
 // 8 member state, 9 spend the invite in one IMMEDIATE transaction. Failures at steps 4-8 against an
 // existing invite are persisted in enroll_attempts; the fifth voids a live invite (voidInvite: an
 // alert to the lane seats, and for a re-bind invite the attempt's death, invite-voided). A failed
-// proof of possession never spends the invite (T-A2).
+// proof of possession never spends the invite.
 //
-// O-a: the flow reuses the 6.1 primitives of the cf48f0e port (auth.mjs): the `created` grammar, the
+// The flow reuses the 6.1 primitives of the cf48f0e port (auth.mjs): the `created` grammar, the
 // nonce format, strict Ed25519, keyBindsAgentUuaid in agentnet, and the one request-nonce table.
 
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";

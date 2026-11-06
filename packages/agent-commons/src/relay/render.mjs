@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: seat-side renderer (spec v3.2 section 7.4).
+// Cloud Commons relay: seat-side renderer (spec v3.2 section 7.4).
 // The header is built from relay metadata, never from record text. Content is
 // inert text in a fence longer than any backtick run inside it: no HTML, no
 // markdown rendering, no links or images. Record content never carries an

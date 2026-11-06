@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: owner-signed roster and policy files (spec v3.2
+// Cloud Commons relay: owner-signed roster and policy files (spec v3.2
 // sections 9.1, 9.2 D3, 12.3). The relay loads both at start and refuses to start
 // on a bad signature. No API changes either one. The owner key is pinned by the
 // operator, outside the files, so a file cannot vouch for itself.

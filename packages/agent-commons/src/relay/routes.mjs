@@ -1,5 +1,5 @@
-// Cloud Commons relay, L1: the request front door (spec v3.4.5 6.5 endpoint inventory, 6.1
-// browser-origin refusal (A8, RT2 note O-c), 7.1 ingress order and size caps, O-d pending members).
+// Cloud Commons relay: the request front door (spec v3.4.5 6.5 endpoint inventory, 6.1
+// browser-origin refusal (A8), 7.1 ingress order and size caps, pending members).
 // Pure: no listener and no I/O. The server reads the method, path, headers and Content-Length, asks
 // classifyRequest before reading any body byte, then authenticates with admitRequest.
 //
@@ -9,7 +9,7 @@
 //      PRESENT, even empty -> 403 browser-origin-refused (before any signature, nonce or invite work;
 //      principal-independent, so not an oracle);
 //   3. the size cap chosen from the path (7.1): one byte over -> 413.
-// Then admitRequest: the 6.1 signature (auth.mjs); a pending member only on GET /v1/status (O-d);
+// Then admitRequest: the 6.1 signature (auth.mjs); a pending member only on GET /v1/status;
 // a member on a fleet path, or a fleet principal on a member path -> the uniform 401; on a fleet
 // record (sent as the signed record { body, sig }) the signer must equal body.by (6.5, C1) ->
 // otherwise the uniform 401; a member record path's <type> must equal the record's type.
@@ -19,7 +19,7 @@ import { MEMBER_RECORD_TYPES } from "./records.mjs";
 import { authenticateRequest, signerMatchesBy, UNAUTHORIZED } from "./auth.mjs";
 
 export const KB = 1024;
-/** 6.5 fleet record types, closed (the fleet record table; v3.4.4 adds review.changes and review.reject, scope-seat ruling (a)). */
+/** 6.5 fleet record types, closed (the fleet record table; v3.4.4 adds review.changes and review.reject). */
 export const FLEET_RECORD_TYPES = Object.freeze([
   "invite.create", "rebind.cancel", "enroll.confirm", "rekey.confirm",
   "task.open", "task.close", "task.assign", "claim.release", "progress.accept", "role.c1", "clock.resume",
@@ -61,7 +61,7 @@ const refusal = (status, error) => ({ ok: false, status, body: { error } });
 export function classifyRequest({ method, path, headers = {}, contentLength = 0 }) {
   const route = BY_KEY.get(`${method} ${path}`);
   if (!route) return refusal(404, "not-found");
-  // A8 / O-c: refuse on the header's PRESENCE (an empty value included), on every non-fleet path.
+  // A8: refuse on the header's PRESENCE (an empty value included), on every non-fleet path.
   if (!isFleetPath(path) && BROWSER_HEADERS.some(h => Object.hasOwn(headers, h))) return refusal(403, "browser-origin-refused");
   if (!Number.isSafeInteger(contentLength) || contentLength < 0) return refusal(400, "bad-content-length");
   if (contentLength > route.cap) return refusal(413, "too-large");
@@ -78,7 +78,7 @@ export function admitRequest(db, route, req, { aud, now }) {
   const a = authenticateRequest(db, req, { aud, now, allowPending: route.allowPending === true });
   if (!a.ok) return a;
   const p = a.principal;
-  // O-d: only GET /v1/status admits a pending member (authenticateRequest enforces allowPending).
+  // Only GET /v1/status admits a pending member (authenticateRequest enforces allowPending).
   if (p.kind !== route.principal) return { ok: false, ...UNAUTHORIZED };
   // A fleet record travels as the signed record { body, sig } (9.2); its body's `by` must be the signer.
   if (route.principal === "fleet" && route.recordType && !signerMatchesBy(p, req.body?.body)) return { ok: false, ...UNAUTHORIZED };

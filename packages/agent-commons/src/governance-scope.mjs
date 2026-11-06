@@ -1,5 +1,5 @@
 /**
- * Classifies an operation into one of three tiers per L3 Section 6.1:
+ * Classifies an operation into one of three tiers:
  * - Tier 1: Local peer messaging (offline, key-derived identities, no registry/principal checks)
  * - Tier 2: Default local profile evolution (offline, commons:evolve, produces advisory approval)
  * - Tier 3: Principal-governed institutional operations (strict opt-in, mandatory action-time verifier)

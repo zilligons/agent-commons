@@ -1,4 +1,4 @@
-// Cloud Commons relay, L2: the `agent-commons relay ...` command (-022 Addendum E P1; L1 follow-up 5).
+// Cloud Commons relay: the `agent-commons relay ...` command.
 //
 //   agent-commons relay serve ...              the production relay (serve.mjs; no test flag)
 //   agent-commons relay <client command> ...   the reference client (client.mjs runClientCommand):
@@ -8,9 +8,9 @@
 //   every client command takes --state <absolute private directory> and optionally --relay-url <url>
 //   (default: the relay origin pinned from the invite).
 //
-// Neither path accepts --test-mode, --test-dir or --test-interface (RT3): they are unknown arguments
+// Security invariant: neither path accepts --test-mode, --test-dir or --test-interface; they are unknown arguments
 // here and exit 2. The test entrypoints are src/relay/server.mjs and src/relay/client.mjs, run directly.
-// Seat (fleet) commands are not here: they sign with seat keys whose custody is an owner decision (O5).
+// Seat (fleet) commands are not here: they sign with seat keys whose custody is an owner decision.
 
 import { serveMain } from "./serve.mjs";
 import { CLIENT_COMMANDS, CLIENT_VALUE_FLAGS, runClientCommand } from "./client.mjs";

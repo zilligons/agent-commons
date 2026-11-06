@@ -1,9 +1,9 @@
-// Cloud Commons relay, L1: write the relay-signed export (spec v3.4.5 9.3 "A truncated tail is L1";
-// Addendum C2; RT2 "the relay-signed export head covers all logs"). Run where the relay key lives (in
-// L1, the relay's own container); it opens relay.db, opens no listener and makes no network call.
+// Cloud Commons relay: write the relay-signed export (spec v3.4.5 9.3: a truncated log tail is detected;
+// the relay-signed export head covers all logs). Run where the relay key lives (on
+// the relay's own host or container); it opens relay.db, opens no listener and makes no network call.
 //
 // node src/relay/export-cli.mjs --db <relay*.db> --relay-key-file <0600 file, 64-hex seed>
-//   --aud <the relay's aud: the L1 test aud, or an L2 production https origin> --out <file> [--at <ms>]
+//   --aud <the relay's aud: the test aud, or a production https origin> --out <file> [--at <ms>]
 // The output is exportRelay(db) plus `head` = {body: {v, aud, epoch, at, logs: [{log, count,
 // head_hash}] for every log}, sig}, both read in one snapshot. Exit status 2 on any refusal.
 

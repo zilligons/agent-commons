@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: record types, field allowlists, size caps and the
+// Cloud Commons relay: record types, field allowlists, size caps and the
 // text sanitizer (spec v3.2 sections 7.1-7.3, 11.4). Pure; no I/O.
 
 export class RelayError extends Error {
@@ -17,7 +17,7 @@ export const ROLES = Object.freeze(["C0", "C1", "C2", "C3"]);
 // Signed fleet record formats (version tags). Kept here so the reducer and the
 // offline export verifier share them without importing each other.
 export const DECISION_V = "commons-relay-decision/1";
-// /2 binds the verdict's position (verifier finding B1): seq is the signer's next verdict number on
+// /2 binds the verdict's position: seq is the signer's next verdict number on
 // the decision, prev the sha256 of the signer's previous signed verdict body there.
 export const APPROVAL_V = "commons-relay-approval/2";
 export const VERIFY_V = "commons-relay-verify/1";
@@ -27,8 +27,8 @@ export const COAUTHOR_V = "commons-relay-coauthor/1";
 export const SEAT_MESSAGE_V = "commons-relay-seat-message/1";
 export const FINDING_OPEN_V = "commons-relay-finding-open/1";
 export const FINDING_CLOSE_V = "commons-relay-finding-close/1";
-// The family a seat ASSERTS in its served_by, "measured:<family>[:<model>]". Since Addendum
-// C5 (spec 9.8) an assertion alone earns no family credit: credit needs a measurer's
+// The family a seat ASSERTS in its served_by, "measured:<family>[:<model>]". Under spec
+// 9.8 an assertion alone earns no family credit: credit needs a measurer's
 // attestation of that verdict whose family equals this assertion.
 const MEASURED = /^measured:([a-z][a-z0-9-]{0,31})(?::[A-Za-z0-9._/@+-]{1,80})?$/;
 export const measuredFamily = (servedBy) => MEASURED.exec(typeof servedBy === "string" ? servedBy : "")?.[1] ?? null;

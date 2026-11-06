@@ -1,4 +1,4 @@
-// Cloud Commons relay, L1: request authentication and response signing (spec v3.4.5 sections 6.1,
+// Cloud Commons relay: request authentication and response signing (spec v3.4.5 sections 6.1,
 // 6.2, 6.3 and 6.5 "Signer = by").
 //
 // Port source (B1): the identity repo at commit cf48f0e, ported verbatim:
@@ -17,14 +17,14 @@
 // (never the Host header); the principal header `commons-principal` names the agent and must be an
 // agentnet id (B3); the key comes from the relay's own keys table (D-i); every principal failure is
 // the same 401 {"error":"unauthorized"} after a check against a fixed dummy key; the nonce is spent
-// (UNIQUE(principal, nonce)) before the future check (T-B6); a replay is 409. On every fleet record
-// the authenticated signer must equal the body's `by` (6.5, Addendum C1).
+// (UNIQUE(principal, nonce)) before the future check; a replay is 409. On every fleet record
+// the authenticated signer must equal the body's `by` (6.5).
 //
 // 6.2: every relay response carries `commons-relay-sig`, Ed25519 by the relay key over
 // JCS({aud, request_nonce, status, body_sha256}); signRelayResponse takes the relay key seed from
 // its caller (the server) and verifyRelayResponse is the client's check against the pinned key.
 //
-// This module performs no network I/O and stores no private key. The server (L1) applies the size
+// This module performs no network I/O and stores no private key. The server applies the size
 // cap, the route inventory and the browser-origin refusal before calling authenticateRequest.
 
 import { createHash, randomBytes } from "node:crypto";
@@ -144,7 +144,7 @@ export function signIdentityRequest({ seedHex, namespace = "agentnet", method, p
 // --- the relay verifier (6.1, 6.3) ----------------------------------------------------------
 
 export const PRINCIPAL_HEADER = "commons-principal";
-/** The L1 test audience (6.1, B5): `.test` is reserved (RFC 6761); the deployed origin is an RT3 item. */
+/** The test audience (6.1, B5): `.test` is reserved (RFC 6761); a deployed relay is configured with its own origin. */
 export const RELAY_TEST_AUD = "http://commons-relay.test:8080";
 export const AUTH_MAX_AGE_MS = 5 * 60 * 1000;
 export const AUTH_MAX_FUTURE_MS = 60 * 1000;
@@ -185,8 +185,8 @@ function principalOf(db, agent) {
 /**
  * Whether this principal may be authenticated on this request (6.1 step 3):
  * - a fleet principal: an active key of an active roster principal;
- * - a member: an active key and status active; or, only where `allowPending` (GET /v1/status,
- *   O-d), a pending member on its pending enrollment key.
+ * - a member: an active key and status active; or, only where `allowPending` (GET /v1/status
+ *   only), a pending member on its pending enrollment key.
  * Suspended, revoked, unknown, retired and revoked-key principals are ineligible: uniform 401.
  */
 function eligible(p, allowPending) {
@@ -203,9 +203,9 @@ function eligible(p, allowPending) {
  * Returns { ok: true, principal } or { ok: false, status, body }. Throws RelayError
  * non-integer-number (400) for a body JCS cannot hash, before any signature or nonce work (B4).
  */
-/** 6.1 `created`: the header grammar's RFC 3339 UTC form (shared with the enrollment flow, O-a). */
+/** 6.1 `created`: the header grammar's RFC 3339 UTC form (shared with the enrollment flow). */
 export const isCreated = (value) => typeof value === "string" && CREATED_RE.test(value) && !Number.isNaN(Date.parse(value));
-/** 6.1 `nonce`: 32-64 lower-case hex (shared with the enrollment flow, O-a). */
+/** 6.1 `nonce`: 32-64 lower-case hex (shared with the enrollment flow). */
 export const isNonce = (value) => typeof value === "string" && /^[0-9a-f]{32,64}$/.test(value);
 
 /**
@@ -242,7 +242,7 @@ export function authenticateRequest(db, req, { aud, now, allowPending = false })
   const d = identityRequestDescriptor({ audience: aud, agent, method: req.method, path: req.path, query: req.query ?? "", bodySha256, created: h.created, nonce: h.nonce });
   const verified = verifyIdentityRequest(d, h, key) && isStrictEd25519PublicKey(key) && keyBindsAgentUuaid(agent, key);
   if (!ok || !verified) return { ok: false, ...UNAUTHORIZED };
-  // Step 5: spend the nonce before the future check (T-B6). It stays spent even if a later step fails.
+  // Step 5: spend the nonce before the future check. It stays spent even if a later step fails.
   if (!spendNonce(db, agent, h.nonce, created, now)) return { ok: false, ...REPLAY };
   // Step 6: more than 60 s ahead is refused, after the nonce is spent.
   if (created > now + AUTH_MAX_FUTURE_MS) return { ok: false, ...STALE };
@@ -250,7 +250,7 @@ export function authenticateRequest(db, req, { aud, now, allowPending = false })
 }
 
 /**
- * 6.5 "Signer = by" (Addendum C1): a fleet record is accepted only from the fleet principal its
+ * 6.5 "Signer = by": a fleet record is accepted only from the fleet principal its
  * body names. A member principal, or any other fleet principal, gets the uniform 401, so a captured
  * signed body cannot be re-submitted by another principal.
  */

@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: work board reducer (spec v3.2 sections 11 and 12.1).
+// Cloud Commons relay: work board reducer (spec v3.2 sections 11 and 12.1).
 // Every member record runs in one transaction: freeze and status check,
 // idempotency, sweep, permission check, handler, receipt. Only the relay clock
 // decides lease expiry; nothing is replayed after expiry or suspension.
@@ -140,7 +140,7 @@ const HANDLERS = {
     if (!s || s.member_id !== m.member_id) throw new RelayError("unknown-submission", 404);
     db.prepare("INSERT INTO evidence(member_id, record_id, submission_id, kind, text, at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(m.member_id, rec.record_id, rec.body.submission_id, rec.body.kind, rec.body.text, now);
-    // Advisory only (T-C3): evidence is context for reviewers and never counts toward D1.
+    // Advisory only: evidence is context for reviewers and never counts toward D1.
     return { kind: "evidence", submission_id: rec.body.submission_id, advisory: true };
   },
 
@@ -175,8 +175,8 @@ function activeMember(db, memberId) {
 }
 
 /**
- * Apply one member record. `memberId` is the authenticated member; in L0 the
- * caller (a test) supplies it, and in L1 request verification will.
+ * Apply one member record. `memberId` is the authenticated member: request
+ * verification supplies it in the server, and a test supplies it directly.
  */
 export function handleMemberRecord(db, memberId, record, now) {
   const rec = validateMemberRecord(record);

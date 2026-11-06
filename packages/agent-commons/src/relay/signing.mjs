@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: record signatures and hash-chained logs (spec v3.2
+// Cloud Commons relay: record signatures and hash-chained logs (spec v3.2
 // sections 9.3 "signed records", 9.5, 9.6). Signatures are Ed25519 over JCS(body),
 // verified with the vendored strict-key primitive. Logs chain each event to the
 // previous hash, so an export verifies offline without trusting relay.db.
@@ -124,8 +124,8 @@ const P1 = ["enroll.confirm", "rekey.confirm"];
 
 /**
  * Offline check of an export against a roster the verifier already trusts (the owner-signed
- * roster, never the export's own copy). Spec 9.3 "Export verification": v3.3 (Addendum C2,
- * security review D-C1/D-C3a), v3.3.2 (S1-S5, E-3, settlement) and v3.4 (the D items, D-1). It trusts no
+ * roster, never the export's own copy). Spec 9.3 "Export verification": v3.3 (C2,
+ * security review D-C1/D-C3a), v3.3.2 (S1-S5, E-3, settlement) and v3.4 (the D items). It trusts no
  * column it can derive from a signed body, and it checks the relationships between rows:
  * - signatures and log chains; each record's acceptance time t is its log event's time, the
  *   signer's key was valid at t (added_at <= t < revoked_at), and body.at lies in the 6.1 window of t;
@@ -137,7 +137,7 @@ const P1 = ["enroll.confirm", "rekey.confirm"];
  * - settlement: each effective D1, D1R and D2 re-checked as of its decision.effective event;
  * - fleet_principals, lanes and policy_family_map re-derived from the owner-signed files;
  * - roles replayed (veto re-projections), members' role and status re-derived (no member active
- *   without an active key, D-1), suspensions, invites (invites.decision_id), enrollments,
+ *   without an active key), suspensions, invites (invites.decision_id), enrollments,
  *   rebind_ends and contributions tied to the decisions that justify them.
  */
 export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
@@ -451,7 +451,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
     return t.row.subject;
   };
 
-  // D-C1 (v3.4.3 9.3; verifier finding F-RECITE / DC1-dup at 5ebc902): each role row is bound to the logged event
+  // D-C1 (v3.4.3 9.3): each role row is bound to the logged event
   // that produced it: its grant's decision.effective event, or the reversal.effect role.reprojected of
   // the veto it cites. A decision produces at most one role row (9.3 roles.decision_id UNIQUE), rows
   // follow their events in decision-log order, and a row's time is its event's time. So a row that
@@ -498,7 +498,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
    * The 9.7 projection, re-derived from the decisions alone (D-C1; security review: for every status): the
    * role of the latest role grant (enroll.confirm C0, role.c1 C1, role.change) by its decision.effective
    * event, among grants effective before `cut` and not reversed before it. For a revoked member, `cut` is
-   * the revoking reversal itself, so the projection is the role at revocation (D-2, S5).
+   * the revoking reversal itself, so the projection is the role at revocation (S5).
    */
   const projectionAt = (member, cut = Infinity) => {
     let best = null;
@@ -510,7 +510,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
     }
     return best ? ROLE_GRANT[best.d.row.action](best.d.body) ?? null : null;
   };
-  // D-C1, S5, D-1, D-2: the members projection is re-derived, never trusted.
+  // D-C1, S5: the members projection is re-derived, never trusted.
   for (const m of exp.members ?? []) {
     const rows = rolesByMember.get(m.member_id) ?? [];
     const enrolls = [...decisions.values()].filter(d => d.row.action === "enroll.confirm" && d.row.subject === m.member_id);
@@ -519,7 +519,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
     // The reversals that actually revoked the member (5.4, 9.7): a reversed enroll.confirm, or the
     // reversal of its enroll invite.create while the enrollment was still unconfirmed. A completed
     // invite's reversal is record-only (9.7 invite.create row) and never revokes. The revoked status
-    // and the revocation boundary below both come from this one list (verifier boundary finding at e1b840c).
+    // and the revocation boundary below both come from this one list.
     const revocations = [...enrolls.filter(d => d.row.state === "reversed"),
       ...(own && own.confirmed_by === null && ownInvite?.row.state === "reversed" ? [ownInvite] : [])];
     const revoked = revocations.length > 0;
@@ -529,7 +529,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
       if (m.role !== expected) flag("member", m.member_id, "member-projection-mismatch", { field: "role" });
       if ((rows.at(-1)?.role ?? null) !== expected) flag("role", m.member_id, "role-ledger-mismatch");
     } else {
-      // D-2 (S5): a revoked member's role is frozen at revocation. The boundary is the decision-log
+      // S5: a revoked member's role is frozen at revocation. The boundary is the decision-log
       // event of the owner veto that revoked it: the veto of a reversal in `revocations`, never a
       // record-only one. Each role row is placed by the event that produced it (above); a row placed
       // after the boundary is refused. The members row AND the last row at or before the boundary must
@@ -548,7 +548,7 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
       : (exp.suspensions ?? []).some(s => s.member_id === m.member_id && s.ended_at === null) ? "suspended" : "active";
     if (status !== m.status) flag("member", m.member_id, "member-projection-mismatch", { field: "status" });
     const activeKeys = (exp.keys ?? []).filter(k => k.principal_kind === "member" && k.principal_id === m.member_id && k.status === "active").length;
-    if (m.status === "active" && activeKeys === 0) flag("member", m.member_id, "active-without-key");   // D-1 (RC-1)
+    if (m.status === "active" && activeKeys === 0) flag("member", m.member_id, "active-without-key");   // RC-1: no active member without an active key
   }
 
   // --- invites, re-bind attempts and suspensions (the D items) ----------------------------
@@ -625,15 +625,15 @@ export function verifyExport(exp, trustedRoster, { relayPublicKey, aud } = {}) {
     const d = justified(c.decision_id, ["accept"]);
     if (!d || d.row.subject !== c.submission_id) flag("contribution", c.submission_id, "contribution-decision-mismatch");
   }
-  // L1 (9.3, C2): given the pinned relay key, the relay-signed head is required and binds every log's tail.
+  // Spec 9.3 (C2): given the pinned relay key, the relay-signed head is required and binds every log's tail.
   if (relayPublicKey !== undefined) problems.push(...verifyExportHead(exp, relayPublicKey, { aud }));
   return { ok: problems.length === 0, problems };
 }
 
-// --- the relay-signed export head (L1; spec 9.3 "A truncated tail is L1", Addendum C2, RT2) --------
+// --- the relay-signed export head (spec 9.3) ----------------------------------------------------
 // The head commits to EVERY log's {log, count, head_hash}, not only the decision log, so a truncated
 // tail of any log (the security log included) and a full rewrite of any chain are detected offline
-// against the pinned relay key. It is signed by the relay key, which exists only in L1.
+// against the pinned relay key. It is signed by the relay key, which only the relay holds.
 
 export const EXPORT_HEAD_V = "commons-relay-export-head/1";
 
@@ -646,7 +646,7 @@ export function logHeads(rows) {
 }
 
 /**
- * The relay-signed export (L1): exportRelay plus `head`, read in ONE read transaction so the head and
+ * The relay-signed export: exportRelay plus `head`, read in ONE read transaction so the head and
  * the rows are the same snapshot. `relaySeedHex` is the relay key seed (64 hex), held by the relay only.
  */
 export function exportRelaySigned(db, { relaySeedHex, aud, at }) {

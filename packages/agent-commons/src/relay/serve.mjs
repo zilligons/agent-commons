@@ -1,7 +1,7 @@
-// Cloud Commons relay, L2: the PRODUCTION entrypoint (-022 Addendum E P1; RT3). It is what
-// `agent-commons relay serve` runs. It is a separate module from the L1 test entrypoint
+// Cloud Commons relay: the PRODUCTION entrypoint (security invariant: it has no test flag). It is what
+// `agent-commons relay serve` runs. It is a separate module from the test entrypoint
 // (server.mjs's command line) and it has no test flag: --test-mode, --test-dir and --test-interface are
-// unknown arguments here, and the L1 test audience (or any non-https, non-canonical or `.test`
+// unknown arguments here, and the test audience (or any non-https, non-canonical or `.test`
 // audience) is refused. Every refusal exits with status 2 before anything listens, and the aud and
 // bind are checked before any file is read.
 //
@@ -25,7 +25,7 @@ import { pathToFileURL } from "node:url";
 import { StartRefused, checkStart, startRelay } from "./server.mjs";
 import { openRelay } from "./roster.mjs";
 
-/** The production flags. No test flag exists here (RT3). */
+/** The production flags. Security invariant: no test flag exists here. */
 export const SERVE_FLAGS = Object.freeze(["--aud", "--bind", "--port", "--db", "--roster", "--policy", "--owner-public-key", "--relay-key-file", "--access-log"]);
 const REQUIRED = Object.freeze(["aud", "bind", "db", "roster", "policy", "owner-public-key", "relay-key-file"]);
 

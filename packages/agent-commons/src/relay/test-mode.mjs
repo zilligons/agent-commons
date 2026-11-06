@@ -1,8 +1,8 @@
-// Cloud Commons relay, L1: the --test-mode hooks (spec v3.4.5 13.2 "Test mode"; RT2 O12).
+// Cloud Commons relay: the --test-mode hooks (spec v3.4.5 13.2 "Test mode").
 //
 // server.mjs loads this module only when the relay starts with --test-mode, and only after the
-// conjunctive start refusal has passed (the L1 test aud AND a loopback or named test-interface
-// bind). A non-test build can leave this file out entirely (RT3: its entrypoint must not carry the
+// conjunctive start refusal has passed (the test aud AND a loopback or named test-interface
+// bind). A non-test build can leave this file out entirely (security invariant: its entrypoint must not carry the
 // flag).
 //
 // - Clock: relay time is the integer (ms) in <dir>/clock, read on every use. The harness moves it;
@@ -10,7 +10,7 @@
 // - Barriers: a closed list of named points in the request path. While <dir>/barriers/<name>.hold
 //   exists, a request reaching that point writes <dir>/barriers/<name>.reached and waits until the
 //   .hold file is gone. No request can name, create or clear a barrier.
-// - Container-local only (O12 item 2): <dir> is one absolute, normalized path given at start, never
+// - Container-local only: <dir> is one absolute, normalized path given at start, never
 //   taken from a request, with no symlink anywhere in it (its realpath is itself). The directory and
 //   every file read from it must be a real directory or regular file (never a symlink, so no path is
 //   redirected elsewhere), owned by this process's user, and not writable by group or others. The
@@ -21,7 +21,7 @@ import { isAbsolute, join, normalize } from "node:path";
 import { RelayError } from "./records.mjs";
 
 /**
- * The closed barrier list. Relay: before the L0 handler runs, and after it committed (before the
+ * The closed barrier list. Relay: before the record handler runs, and after it committed (before the
  * response). Reference client (13.2: "the reference client takes the same barrier hooks"): after it
  * read an inbox record and before handling it, after handling and before acknowledging, and before
  * it drains its outbox.

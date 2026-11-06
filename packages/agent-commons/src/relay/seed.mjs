@@ -1,4 +1,4 @@
-// Cloud Commons relay, L1: the seed bundle (spec v3.4.5 section 8, B5-B7, R5; N22 custody).
+// Cloud Commons relay: the seed bundle (spec v3.4.5 section 8, B5-B7, R5; N22 custody).
 //
 // The seed bundle is the public bootstrap document a member reads with a signed GET /v1/seed. It
 // holds no secret: never a key seed, private key, invite secret, passphrase, provider key, operator

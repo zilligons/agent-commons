@@ -1,5 +1,5 @@
-// Cloud Commons relay, L0: permission table, role ceiling, decision and role
-// ledgers (spec v3.2 sections 9 and 10, Addendum A1). Decisions are made by
+// Cloud Commons relay: permission table, role ceiling, decision and role
+// ledgers (spec v3.2 sections 9 and 10). Decisions are made by
 // fleet principals with signed records; this module checks signatures, counts
 // each seat's latest verdict against the rules, and applies the effect in the
 // same transaction. The structural guards are the section 9.3 triggers.
@@ -78,8 +78,8 @@ export const touchesSecurityPath = (paths, policy = DEFAULT_SECURITY_PATHS) =>
   paths.some(path => policy.some(prefix => path === prefix || path.startsWith(prefix)));
 export const securityPaths = (db) => { const v = getMeta(db, "security_paths"); return v ? JSON.parse(v) : DEFAULT_SECURITY_PATHS; };
 
-// The family a seat ASSERTS in its served_by, "measured:<family>[:<model>]". Since Addendum
-// C5 (spec 9.8) an assertion alone earns no family credit: credit needs a measurer's
+// The family a seat ASSERTS in its served_by, "measured:<family>[:<model>]". Under spec
+// 9.8 an assertion alone earns no family credit: credit needs a measurer's
 // attestation of that verdict whose family equals this assertion (see quorum).
 export { measuredFamily } from "./records.mjs";
 
@@ -106,8 +106,8 @@ function fleetPrincipal(db, by) {
 
 /**
  * Check a fleet record's own signature against the signer it names (body.by). The
- * record's authority comes from this signature alone. L1 carry-forward (moderator,
- * B1 round): the authenticated request that delivers a record must be signed by the
+ * record's authority comes from this signature alone. In addition
+ * the authenticated request that delivers a record must be signed by the
  * same principal as body.by, and a fresh request nonce never makes an old record
  * valid again (positions and ids are checked here, inside the write transaction).
  */
@@ -179,12 +179,12 @@ function taskArgs(args) {
   };
 }
 
-// L0 actions. The seat decisions of the enrollment flows are L0 (-022 Addendum C4, spec
+// Seat actions. The seat decisions of the enrollment flows are made here (spec
 // 15): invite.create, enroll.confirm and rekey.confirm (D0) and rebind.confirm (D1R). The
 // request side (invite spend, nonce spend, key insert, pending member) and its endpoints
-// are L1; tests seed those rows with a test-only helper. review.changes and
+// are in enroll.mjs and server.mjs; tests seed those rows with a test-only helper. review.changes and
 // review.reject are the seat outcomes of the 11.2 state diagram; spec v3.4.4 6.5 names them
-// as D0 fleet record types (scope-seat ruling (a) on the L1 route gap).
+// as D0 fleet record types.
 // D0 actions any AC seat other than the invite creator may sign (P1); the rest are the lane owner's.
 const P1_ACTIONS = Object.freeze(["enroll.confirm", "rekey.confirm"]);
 const ACTIONS = {
@@ -473,7 +473,7 @@ function insertVerdict(db, decisionId, principal, verdict, servedBy, now, bodyTe
 
 /**
  * Append one verdict (approve, object, reject, withdraw). Each seat's latest verdict is
- * its current one (A1). The verdict's position is part of what the seat signed (verifier finding B1):
+ * its current one (A1). The verdict's position is part of what the seat signed:
  * `seq` must be the seat's next number on this decision and `prev` the sha256 of the
  * seat's previous signed body there (null at seq 1; a D0, D1 or D1R creator's seq 1 is
  * its decision record). Both are checked in this write transaction, so a captured
@@ -493,7 +493,7 @@ export function addVerdict(db, signed, now) {
     if (!decision) throw new RelayError("unknown-decision", 404);
     const last = db.prepare("SELECT seq, body FROM approvals WHERE decision_id = ? AND approver = ? ORDER BY seq DESC LIMIT 1").get(decision.id, principal.principal_id);
     if (body.seq !== (last?.seq ?? 0) + 1) throw new RelayError("approval-seq", 409, `expected seq ${(last?.seq ?? 0) + 1}`);
-    // Spec 9.2 / Addendum C1: a wrong prev is refused with the same 409 approval-seq.
+    // Spec 9.2: a wrong prev is refused with the same 409 approval-seq.
     if (body.prev !== (last ? verdictPrev(last.body) : null)) throw new RelayError("approval-seq", 409, "prev does not name the previous verdict");
     const seq = insertVerdict(db, decision.id, principal, body.verdict, body.served_by, now, jcs(body), sig, body.seq, body.prev);
     appendLog(db, "decision", { kind: "verdict", decision_id: decision.id, by: principal.principal_id, seq, verdict: body.verdict, served_by: body.served_by }, now);
@@ -605,7 +605,7 @@ function transition(db, d, state, now, extra = {}) {
  * Open a suspension (P3, 9.4) inside the caller's transaction. The 9.3 trigger suspends
  * the member, releases its live claims and holds its in-review submissions; this reopens
  * the released tasks (attempts unchanged), holds the held ones and drops pending seat
- * messages. Used by the suspend effect and, for reason "rebind", by the L1 rebind invite.
+ * messages. Used by the suspend effect and, for reason "rebind", by the rebind invite.
  */
 export function openSuspensionInTx(db, { memberId, reason, decisionId = null, inviteId = null, by, now }) {
   const released = db.prepare("SELECT task_id FROM claims WHERE member_id = ? AND state = 'live'").all(memberId).map(r => r.task_id);
@@ -713,7 +713,7 @@ export function expireInTx(db, now) {
 
 /**
  * Void an invite after the failure budget (5.2: five failures against one invite). The counting is
- * the L1 request side; this is the relay's effect, which L1 calls and L0 tests drive directly. An
+ * the request side (enroll.mjs); this is the relay's effect, which the request side calls and tests drive directly. An
  * unspent re-bind invite's attempt is recorded dead (invite-voided).
  */
 export function voidInvite(db, inviteId, now) {
@@ -760,7 +760,7 @@ export function rebindConfirmationView(db, enrollmentId) {
     enrollment_id: e.id, member_id: e.member_id, invite_id: e.invite_id, invite_created_by: e.created_by,
     new_agent: e.agent, new_public_key: e.public_key, requested_at: e.spent_at,
     rebind_count: rebindCount(db, e.member_id), open_suspensions: open,
-    // Addendum D6: the member's dead attempts, which never count.
+    // The member's dead attempts, which never count.
     dead_attempts: db.prepare(`SELECT r.invite_id, r.cause, r.decision_id, r.at FROM rebind_ends r JOIN invites i USING(invite_id)
                                 WHERE i.member_id = ? ORDER BY r.at, r.invite_id`).all(e.member_id).map(r => ({ ...r })),
   };
@@ -809,7 +809,7 @@ function reverseEffects(db, t, veto, owner, now) {
     case "role.c1": case "role.change": {
       // Re-project from the member's effective role grants (latest wins), as a new row citing the veto.
       const current = roleOf(db, t.subject);
-      // D-2 (S5): a revoked member's role is frozen at revocation. The reversal is
+      // S5: a revoked member's role is frozen at revocation. The reversal is
       // still recorded (the target is reversed, this effect is logged, the owner line is written),
       // but no role row is added; the 9.3 trigger roles_frozen_when_revoked would refuse one.
       if (db.prepare("SELECT status FROM members WHERE member_id = ?").get(t.subject).status === "revoked") {
@@ -858,7 +858,7 @@ function reverseEffects(db, t, veto, owner, now) {
       break;
     }
     case "invite.create": {
-      // Addendum D4 (replaces C3's row), any kind. Completed = record-only (reverse the confirmation
+      // Any kind. Completed = record-only (reverse the confirmation
       // itself). Not yet completed: the reversal kills the attempt.
       const inv = db.prepare("SELECT * FROM invites WHERE decision_id = ?").get(t.id);
       const e = db.prepare("SELECT * FROM enrollments WHERE invite_id = ?").get(inv.invite_id);
@@ -1061,7 +1061,7 @@ function effect(db, d, now) {
       db.prepare("UPDATE keys SET status = 'active' WHERE public_key = ?").run(e.public_key);
       resumeHeld(db, e.member_id, now);
       // RD3, 9.6: the count is recorded; from the second effective re-bind on, exactly one
-      // rebind.repeat alert per (member, count). The seat decisions are L0 since Addendum C4.
+      // rebind.repeat alert per (member, count). The seat decisions are made in this module.
       const count = rebindCount(db, e.member_id);
       appendLog(db, "security", { kind: "rebind.confirmed", member_id: e.member_id, enrollment: e.id, decision: d.id, count }, now);
       if (count >= 2 && !db.prepare("SELECT 1 FROM alerts WHERE kind = 'rebind.repeat' AND subject = ? AND json_extract(detail, '$.count') = ?").get(e.member_id, count)) {

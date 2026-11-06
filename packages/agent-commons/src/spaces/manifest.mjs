@@ -4,7 +4,7 @@
  * ./pillar-group.mjs (C9). Computes no engine-vs-client hash (C13/V-7): the
  * manifest path uses the vendored canonicalJson, never the engine's jcs (V-1).
  *
- * In scope here (slice 6): V-3 (only whole chains yield a head), V-6's
+ * In scope here: V-3 (only whole chains yield a head), V-6's
  * sign → verify → own-store-save → return order, B-1/B-2 (one binding,
  * keyBindsRow: AC's parse-based rule-1 check plus the vendored strict-key
  * rule), B-3 (policy-record candidates from the verified head), B-4 (full-uuaid
@@ -16,9 +16,9 @@
  * from `leaving` exactly as pillar's reference does (groups-v2.mjs:534, :541).
  *
  * Deferred by design, NOT stubbed: P-7 (a remove/leave manifest adds the
- * pendingRemovals entry in the same step — slice 7, spans adapter.json),
- * the sends themselves (slice 8), V-7's send/receive wiring (slices 8/9),
- * B-5's transport-key snapshot (slices 5/8).
+ * pendingRemovals entry in the same step; it spans adapter.json),
+ * the sends themselves, V-7's send/receive wiring and
+ * B-5's transport-key snapshot.
  */
 import {
   adminChange, adminOf, isStrictPublicKey, manifestHash, verifyChain,
@@ -126,7 +126,7 @@ function rosterStoreFor(store) {
 
 /**
  * Build, sign and apply the next manifest to the ADMIN's own store, then
- * return it for the caller to send (the send itself is slice 8 — this never
+ * return it for the caller to send (the send itself is not done here — this never
  * sends). Order is load-bearing:
  *   1. load through SpaceStore.loadRoster, which re-verifies (F13, V-3);
  *   2. explicit verifiedHead (V-3) and selfCheck (B-6);
@@ -143,9 +143,9 @@ function rosterStoreFor(store) {
  * (`syncMailboxRoster`, :457-458) — this wrapper owns no mailbox row.
  *
  * P-7 (a remove/leave manifest puts the member into pendingRemovals in the
- * same step) is slice 7's: it spans the roster and adapter.json. The record
+ * same step) is not done here: it spans the roster and adapter.json. The record
  * fields other than chain/head/leaving (seen, frozen, …) are preserved
- * verbatim; the receiver-side application semantics belong to slice 8.
+ * verbatim; the receiver-side application semantics are not applied here.
  *
  * Synchronous; the adapter's serial queue (I-5) is the caller's job.
  * @returns {{ manifest: object, record: object }}
@@ -204,7 +204,7 @@ export function agentRecordForRow(row) {
  * a member's key in another of them is refused NOT_ADMITTED, because a policy
  * built here holds only each row's EXACT spelling. A spelling outside the set
  * never reaches policy: trust.authorize refuses it AGENT_ONLY. Writes no
- * policy: slice 7's policy writer is the only writer and consumes this helper.
+ * policy: the policy writer is the only writer and consumes this helper.
  */
 export function agentRecordsFromVerifiedHead(rec) {
   const head = verifiedHead(rec);

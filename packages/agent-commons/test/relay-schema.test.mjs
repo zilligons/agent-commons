@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { CORE_DDL, DDL, EXTENSION_DDL, SPEC_PIN, assertForeignKeys } from "../src/relay/schema.mjs";
 
 const H = t => createHash("sha256").update(t).digest("hex");
@@ -459,7 +460,11 @@ function run(ddl, c) {
   return { accepted: true, oracleOk: oracle ? oracle(db) : true };
 }
 const pass = (c, r) => c[3] === "ok" ? r.accepted && r.oracleOk : !r.accepted && r.error.includes(c[3]);
-test("CORE_DDL is byte-identical to the section 9.3 block of the pinned spec (v3.4.6 at f49c073), the scope seat's D-2 statements", () => {
+// The spec is a repo file, not a package file: in an installed copy of the package (a /node_modules/ path
+// segment) this one test skips. In the repo it always runs, and fails if the spec is missing.
+const INSTALLED_COPY = fileURLToPath(import.meta.url).includes("/node_modules/");
+test("CORE_DDL is byte-identical to the section 9.3 block of the pinned spec (v3.4.6 at f49c073), the scope seat's D-2 statements",
+  { skip: INSTALLED_COPY ? "repo-only: the spec is not part of the package" : false }, () => {
   const spec = readFileSync(new URL("../../../docs/plans/cloud-commons-relay.md", import.meta.url), "utf8");
   const start = spec.indexOf("```sql\n") + 7;
   const block = spec.slice(start, spec.indexOf("```", start));

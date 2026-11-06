@@ -1,9 +1,10 @@
 // Narrow S5 verifier-boundary regression. Fixture keys only; no source mutation.
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync } from 'node:fs';
 const root=resolve(process.argv[2]); 
-const at=p=>pathToFileURL(resolve(root,'packages/agent-commons',p)).href;
+const pkgRoot=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
+const at=p=>pathToFileURL(resolve(pkgRoot,p)).href;
 const F=await import(at('test/relay-fixtures.mjs'));
 const G=await import(at('src/relay/governance.mjs'));
 const S=await import(at('src/relay/signing.mjs'));

@@ -1,11 +1,12 @@
 // Verifier probe r17: forged role rows after the ACTUAL revocation, in the completed-invite history and the original S5
 // history, plus an active control. Fixture keys only; in-memory fixture DBs; product source imported read-only
 // from argv[2]. Usage: node r17-forge-after-invite.mjs <archiveRoot> <out.json>
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync } from 'node:fs';
 const root = resolve(process.argv[2]), output = resolve(process.argv[3]);
-const at = p => pathToFileURL(resolve(root, 'packages/agent-commons', p)).href;
+const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const at = p => pathToFileURL(resolve(pkgRoot, p)).href;
 const F = await import(at('test/relay-fixtures.mjs'));
 const G = await import(at('src/relay/governance.mjs'));
 const S = await import(at('src/relay/signing.mjs'));

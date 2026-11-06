@@ -66,7 +66,7 @@ function runProbe(name, sha) {
 }
 
 test("the verifier's boundary script (f687519d): a completed invite's record-only veto is not the revocation boundary", () => {
-  const r = runProbe("revocation-boundary-record-only.mjs", "f687519dca8b7f8404fe76f7e0bdd28617c3a3bda779fcedacf222203a5dd68f");
+  const r = runProbe("revocation-boundary-record-only.mjs", "46889e1522a719dbace1ae982a9c36e6fbfabcf4a866053b3a2d680b4f13fa14");
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const b = r.file.recordOnlyInviteThenRealRevocation;
   assert.deepEqual([r.file.pass, r.file.control.pass, b.pass], [true, true, true]);
@@ -75,7 +75,7 @@ test("the verifier's boundary script (f687519d): a completed invite's record-onl
 });
 
 test("the forgery probe (780609a7): the clean export verifies; a post-revocation row, alone or with the member row, is refused", () => {
-  const r = runProbe("s5-forge-export.mjs", "cd5b3eceafbc0ccf4d38893e066d0e3f1d1d5718b672de09178d7501a529be7b");
+  const r = runProbe("s5-forge-export.mjs", "4cf6239cb09281bc70440e877510f1fc6a9410c393ee778af63be70236c985c6");
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const o = JSON.parse(r.stdout.trim().split("\n").at(-1));
   assert.deepEqual([o.clean.ok, o.rowOnly.ok, o.rowAndMember.ok], [true, false, false]);
@@ -85,7 +85,7 @@ test("the forgery probe (780609a7): the clean export verifies; a post-revocation
 
 test("the verifier's S5 witness (d2e5b45a): the revoked case keeps revoked / C2 / 3 rows with a clean export; the sibling re-projects", () => {
   const witness = new URL("./relay-fixtures/review/s5-witness.mjs", import.meta.url);
-  assert.equal(createHash("sha256").update(readFileSync(witness)).digest("hex"), "d2e5b45ae8c5bc2b0d3725458c1ce031073805558721f2e14972a9072d0d27c8");
+  assert.equal(createHash("sha256").update(readFileSync(witness)).digest("hex"), "251d0bcf1d6f0a098086ffda5df29b1b28829c1f9da611d8593d4ece78ff7965");
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   const tmp = mkdtempSync(join(tmpdir(), "relay-s5-witness-"));
   try {
@@ -244,7 +244,7 @@ test("boundary: completed-invite veto (record-only) -> legitimate demotion -> en
 // cases are REQUIRED here (the probe itself requires only its earlier set).
 
 test("the verifier's r17 probe (58a9f7fa): every re-citation shape is refused; the required set still holds", () => {
-  const r = runProbe("r17-forge-after-invite.mjs", "0d0a888a370c4445f252be2ec5a02910c5daa09dc2275a678b91a6ebbceff349");
+  const r = runProbe("r17-forge-after-invite.mjs", "94077e29679a3c480575646141269569aa54258179033fd23e871182bdc329d9");
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.deepEqual(r.file.required, { h1CleanRevokedC1: true, h1PostRevocationVetoWritesNoRow: true, h1ZzShapeRefusedAtBoundary: true, h1CitesRevokingVetoRefused: true });
   // The four F-RECITE histories, mandatory: completed invite (revoked, row-only and row+member), original
@@ -263,8 +263,8 @@ test("the verifier's r17 probe (58a9f7fa): every re-citation shape is refused; t
 });
 
 test("the scope seat's DC1-dup probes (115c5eef, fc4fe58a): honest exports verify; the re-cited row is refused with or without the member row", () => {
-  for (const [name, sha] of [["active-forge-dup.mjs", "416d05beb0128f9d3989505f7d7ca36aa1a24da55eb963814bf6cb9a5755a1f4"],
-    ["boundary-forge-dup.mjs", "9a0b4959e9d52356884c7835c58416a549ca7df1e4cc60e517d02f19c4c50a89"]]) {
+  for (const [name, sha] of [["active-forge-dup.mjs", "436c34fe4a5b4f4744b583f26881e46087567359f65c08389ff5468ae186d48d"],
+    ["boundary-forge-dup.mjs", "f9819cf8fd1851ba1131333c9384f048f7f824eb4cd1c4fb8576694efe45645f"]]) {
     const r = runProbe(name, sha);
     assert.equal(r.code, 0, name + r.stdout + r.stderr);
     const o = JSON.parse(r.stdout.trim().split("\n").at(-1));

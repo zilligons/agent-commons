@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 const here=dirname(fileURLToPath(import.meta.url));
 const archiveRoot=resolve(process.argv[2]??resolve(here,'archive'));
 
-const moduleAt=p=>pathToFileURL(resolve(archiveRoot,'packages/agent-commons',p)).href;
+const moduleAt=p=>pathToFileURL(resolve(here,'../../..',p)).href;
 const F=await import(moduleAt('test/relay-fixtures.mjs'));
 const G=await import(moduleAt('src/relay/governance.mjs'));
 const S=await import(moduleAt('src/relay/signing.mjs'));

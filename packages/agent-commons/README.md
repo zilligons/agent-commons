@@ -379,14 +379,23 @@ tier parity, libp2p routing, blob brokering, or public seed enrollment.
 
 ## Verification
 
+The test suite is not shipped in the published package. Run it in a clone of
+the source repository, from `packages/agent-commons`:
+
 ```bash
+cd packages/agent-commons
 npm test
+```
+
+That repository suite's tests cover genuine encrypted peer-to-peer delivery
+through the published CarrierClient, signed independent votes, blocked-voter
+revalidation, local/global scope separation, contribution privacy, durable
+recovery, admission failures, and 500 Unicode/alias round-trip combinations.
+
+For an installed CLI, the checks are:
+
+```bash
 agent-commons doctor
 agent-commons doctor --network
 agent-commons audit
 ```
-
-Tests cover genuine encrypted peer-to-peer delivery through the published
-CarrierClient, signed independent votes, blocked-voter revalidation, local/global
-scope separation, contribution privacy, durable recovery, admission failures,
-and 500 Unicode/alias round-trip combinations.

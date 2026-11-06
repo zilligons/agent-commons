@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 const [major,minor]=process.versions.node.split(".").map(Number);
 if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.js >=22.13. Upgrade Node before installing or starting this runtime. No identity was created.");process.exit(1)}
+// Cloud Commons relay: `agent-commons relay ...` (src/relay/cli.mjs) runs before, and apart from, the commands below.
+if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}else{
 
 const { readFileSync }=await import("node:fs");
 const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/config.mjs");
@@ -71,3 +73,4 @@ try{
     store.close();
   }
 }catch(error){console.error(JSON.stringify({error:error.code??"AGENT_COMMONS_ERROR",message:error.message}));process.exitCode=1}
+}

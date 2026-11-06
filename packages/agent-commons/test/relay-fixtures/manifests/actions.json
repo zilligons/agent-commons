@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "source": "spec v3.3 (4bac8d6) sections 7.2, 9.1, 10 and the 6.5 fleet record table; action names are the L0 permission vocabulary",
+  "member": {
+    "C0": ["heartbeat", "message", "note", "inbox.read", "inbox.ack", "board.read", "claims.read"],
+    "C1": ["heartbeat", "message", "note", "inbox.read", "inbox.ack", "board.read", "claims.read",
+           "claim", "release", "progress", "result", "evidence", "review-request"],
+    "C2": ["heartbeat", "message", "note", "inbox.read", "inbox.ack", "board.read", "claims.read",
+           "claim", "release", "progress", "result", "evidence", "review-request", "propose", "advisory-review"],
+    "C3": ["heartbeat", "message", "note", "inbox.read", "inbox.ack", "board.read", "claims.read",
+           "claim", "release", "progress", "result", "evidence", "review-request", "propose", "advisory-review"]
+  },
+  "fleet": {
+    "ac-seat": ["decision.create", "approve", "object", "reject", "withdraw", "suspend", "owner-record.confirm", "message.send", "coauthor.declare"],
+    "verifier": ["verify.result", "suspend", "coauthor.declare"],
+    "security": ["security.approve", "suspend", "coauthor.declare", "finding.open", "finding.close"],
+    "scope": ["suspend", "freeze", "owner-record.confirm"],
+    "owner": ["suspend", "veto", "freeze", "unfreeze"],
+    "measurer": ["served_by.attest"]
+  },
+  "ceiling": ["decision.create", "approve", "object", "reject", "withdraw", "invite.create", "enroll.confirm",
+              "suspend", "veto", "freeze", "unfreeze", "verify.result", "security.approve", "coauthor.declare",
+              "finding.open", "finding.close", "owner-record.confirm", "message.send", "served_by.attest", "push", "merge", "publish", "deploy", "spend"],
+  "notes": {
+    "coauthor.declare": "6.5 names an AC seat; L0 also lets the verification lane and security reviewer declare, since they are fleet principals that may contribute text (9.2 'every fleet principal')",
+    "owner": "9.5: owner-record.confirm is signed by an AC seat or the scope seat, never the owner",
+    "finding.open": "10 requires C2 to have no open security finding but names no record for it; L0 lets the security reviewer open and close findings (L0 choice, for the spec owner to confirm)",
+    "served_by.attest": "9.1, 9.8 (Addendum C5): only the owner-assigned measurer attests; it never votes"
+  }
+}

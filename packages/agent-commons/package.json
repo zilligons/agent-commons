@@ -22,6 +22,9 @@
     "./transport": { "types": "./src/transport.d.mts", "import": "./src/transport.mjs" },
     "./channels": { "types": "./src/channels.d.mts", "import": "./src/channels.mjs" },
     "./governance-scope": { "types": "./src/governance-scope.d.mts", "import": "./src/governance-scope.mjs" },
+    "./relay/client": "./src/relay/client.mjs",
+    "./relay/seed": "./src/relay/seed.mjs",
+    "./relay/auth": "./src/relay/auth.mjs",
     "./package.json": "./package.json"
 
   },

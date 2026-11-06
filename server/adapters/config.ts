@@ -1,7 +1,7 @@
 /**
  * L2 adapter layer — config loader (fail-closed, no secrets).
  *
- * Config file: `agent-commons.adapters.json` in the server working directory,
+ * Config file: `agent-commons.adapters.json` in the application directory,
  * **gitignored** (it names runtime model ids, which §4.4 treats as sensitive on a
  * public repo). The loader fails closed on any parse or validation error
  * (design §6.2): bad config is treated as if NO config exists — the server logs
@@ -20,6 +20,9 @@
  */
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { foundingCohort } from "../../shared/cohort";
+import { L10_FROZEN_LITERALS } from "./l10-routes";
+import { resolveRuntimePaths } from "../runtime-paths";
+import { join } from "node:path";
 
 export type SlotConfig = {
   adapter?: string;
@@ -110,11 +113,11 @@ function validateConfig(raw: unknown): AdaptersConfig | null {
 
 /**
  * Load the adapters config from `agent-commons.adapters.json` in the server
- * working directory. Returns null on absence, parse error, or validation failure
+ * application directory. Returns null on absence, parse error, or validation failure
  * (fail-closed: treat as no config).
  */
-export function loadAdaptersConfig(cwd: string = process.cwd()): AdaptersConfig | null {
-  const path = `${cwd}/agent-commons.adapters.json`;
+export function loadAdaptersConfig(appDir: string = resolveRuntimePaths().appDir): AdaptersConfig | null {
+  const path = join(appDir, "agent-commons.adapters.json");
   if (!existsSync(path)) return null;
   let raw: unknown;
   try {
@@ -125,31 +128,46 @@ export function loadAdaptersConfig(cwd: string = process.cwd()): AdaptersConfig 
   return validateConfig(raw);
 }
 
-/**
- * Resolve the adapter name for a given slot id. Returns null when the default
- * path (preview-bridge) should be used.
- */
+export function getDefaultAdapterForSlot(slotId: string): string | null {
+  switch (slotId) {
+    case "continuity":
+    case "collaboration":
+    case "security": return "anthropic-messages";
+    case "governance":
+    case "sustainability": return "openai-responses";
+    case "release":
+    case "integration": return "google-gemini";
+    default: return null;
+  }
+}
+
+/** Explicit environment/configuration choices precede the slot default. */
 export function resolveAdapterForSlot(
   slotId: string,
   config: AdaptersConfig | null,
 ): string | null {
   const envOverride = process.env.AGENT_COMMONS_ADAPTER;
   if (envOverride) return envOverride;
-  if (!config) return null;
+  if (!config) return getDefaultAdapterForSlot(slotId);
   const slot = config.slots?.[slotId];
   if (slot?.adapter) return slot.adapter;
-  return config.defaultAdapter ?? null;
+  return config.defaultAdapter ?? getDefaultAdapterForSlot(slotId);
 }
 
 /**
- * Resolve the runtime model for a given slot id. On the default path this is
- * always the slot's historical model (config cannot relabel the default path).
+ * Each eligible provider route always uses its slot's frozen literal. Other routes
+ * retain their explicit configuration or historical model.
  */
 export function resolveRuntimeModel(
   slotId: string,
   historicalModel: string,
   config: AdaptersConfig | null,
 ): string {
+  const providerAdapter = getDefaultAdapterForSlot(slotId);
+  if (providerAdapter && resolveAdapterForSlot(slotId, config) === providerAdapter) {
+    const literal = L10_FROZEN_LITERALS[slotId as keyof typeof L10_FROZEN_LITERALS];
+    if (literal) return literal;
+  }
   if (!config) return historicalModel;
   const slot = config.slots?.[slotId];
   if (slot?.runtimeModel) return slot.runtimeModel;

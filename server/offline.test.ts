@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { networkConsole } from "./network";
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("./offline-test-home.mjs");
+
+const { networkConsole } = await import("./network");
 
 function spies() {
   const calls: string[] = [];

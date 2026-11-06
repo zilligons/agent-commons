@@ -1,7 +1,7 @@
 /**
  * L10 C1 — cohort adapter `l10-cli`.
  *
- * Implements the live cohort adapter behind the accounting gate (inert).
+ * Implements the live cohort adapter behind accounting admission.
  * Dispatches eligible cohort slots (continuity, collaboration, security, governance)
  * to their respective frozen CLI binaries using closed child environments, stdin prompts,
  * ledger witness verification, and structured envelope normalization.
@@ -22,7 +22,8 @@ import {
   type AdapterMetrics,
   type ModelAdapter,
 } from "./types";
-import { assertL10TrialEnabled, consumeL10TrialTurn } from "./l10-limits";
+import { assertLiveAccountingGate } from "./l10-limits";
+import { markAccountingDispatchStarted } from "./l10-admission";
 import {
   assertSlotEligibleForL10,
   buildL10Argv,
@@ -47,6 +48,7 @@ import { getResolvedL10Binaries, getClaudeRouteResolution } from "./config";
 export interface L10CliTestKnobs {
   fixtureBin?: string;
   fixtureLedgerPath?: string;
+  /** Private fixture entry only; never available to production adapter calls. */
   skipAccountingGate?: boolean;
   permitPool?: L10PermitPool;
 }
@@ -71,12 +73,12 @@ async function callL10CliInternal(
   req: AdapterRequest,
   testKnobs?: L10CliTestKnobs,
 ): Promise<AdapterResultLive> {
-  // 1. assertL10TrialEnabled() first (inert when unset)
+  // 1. Refuse live calls without an accounting admission permit.
   if (!testKnobs?.skipAccountingGate) {
-    assertL10TrialEnabled();
+    assertLiveAccountingGate(req.accountingPermit);
   }
 
-  // 2. assertSlotEligibleForL10(req.slotId). Terra/Prism and unknown slots refused with MODEL_UNAVAILABLE
+  // 2. Unknown slots remain refused; provider-only slots cannot use this CLI transport.
   assertSlotEligibleForL10(req.slotId);
 
   // 3. Ignore req.runtimeModel for the model choice.
@@ -96,11 +98,11 @@ async function callL10CliInternal(
   }
 
   // 4. Route by slot:
-  // - release (Grok): refuse with MODEL_UNAVAILABLE (zero dispatch)
+  // - release (Argon): use its HTTP adapter, never this CLI transport.
   if (req.slotId === "release") {
     throw new AdapterFailure(
       "MODEL_UNAVAILABLE",
-      "grok route blocked until its prompt/stdin precedence is established",
+      "Argon requires the metered Gemini HTTP transport, not the CLI adapter",
       null,
       false,
     );
@@ -184,14 +186,14 @@ async function callL10CliInternal(
       } catch {}
     }
 
-    if (!testKnobs?.skipAccountingGate) {
-      consumeL10TrialTurn(req.slotId);
-    }
     if (route === "claude") {
       if (testKnobs !== undefined) {
         if (!testKnobs.permitPool || isSharedClaudePermitDir(testKnobs.permitPool.poolDir)) {
           throw new AdapterFailure("SECURITY_VIOLATION", "test entry call requires private permitPool; using the shared pool in tests is prohibited", null, false);
         }
+      }
+      if (!testKnobs?.skipAccountingGate) {
+        markAccountingDispatchStarted(req.accountingPermit);
       }
       spawnRes = testKnobs?.fixtureBin
         ? await spawnClaudeL10ChildForTest({
@@ -216,6 +218,9 @@ async function callL10CliInternal(
           });
     } else {
       // Codex
+      if (!testKnobs?.skipAccountingGate) {
+        markAccountingDispatchStarted(req.accountingPermit);
+      }
       spawnRes = testKnobs?.fixtureBin
         ? await spawnCodexL10ChildForTest({
             argv: [testKnobs.fixtureBin, ...argv.slice(1)],

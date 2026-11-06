@@ -1,0 +1,33 @@
+# Console production hardening
+
+Author: the implementation author, 2026-10-27 Pacific. Served-by: exact Codex answering model independently unprovable from logs. This is implementation guidance for independent security and verification review; it is not deployment authorization.
+
+Production requires absolute process-environment AGENT_COMMONS_APP_DIR and AGENT_COMMONS_DATA_DIR. The former contains agent-commons.adapters.json, docs/agents and packages/agent-commons/profiles; the latter contains the existing commons.db. A missing production database refuses boot rather than minting a new identity store. Development defaults derive from the source location, never the launch directory. Keep the data directory private to the unprivileged service and back up the existing encrypted volume under the separate deployment design. This change does not encrypt existing identity keys.
+
+Summary reads select stored public keys only. Signing identities are initialized explicitly at startup; a missing public identity during a read refuses instead of creating a key. HTTPS is required for standards document links on both sides.
+
+AGENT_COMMONS_ALLOWED_HOSTS accepts comma-separated bare hostnames only. Malformed values, schemes and ports refuse boot. Default loopback authorities keep the actual listener port. The production proxy must preserve the intended public Host and reject other external Hosts; forwarded Host is not trusted. AGENT_COMMONS_TRUST_PROXY_HOPS defaults to0 and requires an explicit integer. Set only the exact trusted hop count; trusting arbitrary forwarded client IPs defeats per-client rate limits.
+
+The rate budget covers all /api routes, including GET, plus non-API mutations. Defaults are120 requests per60000ms, configurable using AGENT_COMMONS_RATE_LIMIT_MAX and AGENT_COMMONS_RATE_LIMIT_WINDOW_MS. Those controls and the app/data roots are process-only and do not pass to provider children. The logger precedes guards and emits only method, path, status, code and client IP. API-only JSON parsing is limited to32KB; parse errors use fixed codes without echoing input.
+
+Production Content-Security-Policy uses same-origin scripts/styles/fonts, no framing and no third-party fonts. X-Content-Type-Options is nosniff, Referrer-Policy is no-referrer, and HSTS is production-only. X-Powered-By is removed. Development explicitly permits inline script/style and WebSocket connections for Vite hot reload; this exception must not be used as the public runtime. Production browser rendering remains a deployment verification item.
+
+Nine previously hazardous test entries now refuse direct execution before application imports; runner execution installs memory-only SQLite isolation. Never run tests in a deployment directory. All application checks for this work run in the separate hardening worktree with provider requests disabled.
+
+## Authenticated reads and platform spending
+
+Every API GET/HEAD now requires the existing operator Bearer token. HTML/static assets remain public; the shared token panel keeps protected views unmounted until a token is saved. The token lives only in page memory, is never put into URLs, and token changes abort requests and clear cached protected data. Authenticated reads require no Origin. Mutations retain their Origin requirement; per-principal non-browser access, public bring-your-own keys and Pillar delegation remain in the separate access-gate design.
+
+GET /api/cohort/usage is token-protected and shows Los Angeles day/month usage, limits, outstanding reservations, price/history verification and exhausted caps. Platform limits are4 runs/day,500000 charged-plus-outstanding tokens/day and25USD/month. Runs and every reservation share the accounting store's BEGIN IMMEDIATE transaction; a run crossing midnight consumes the new day's slot when it reserves. Probes remain count-only and cannot acquire generation reservations. Monetary estimates use immutable per-model price snapshots in SQLite and survive restart; settlement records actual liability, including overruns, rather than losing evidence. See platform-spending-prices.md for provider links and conservative rate scope.
+
+AGENT_COMMONS_MAX_DAILY_RUNS, AGENT_COMMONS_MAX_DAILY_TOKENS and AGENT_COMMONS_MAX_MONTHLY_USD are process-only lower overrides; zero disables platform paid admission, malformed or above-ceiling values refuse. All outstanding holds count in the current day/month across period changes. New admissions require fresh verified prices; already-reserved settlement retains its pinned price. Prices older than7days refuse new paid admission. These are conservative token-price estimates, not provider invoices or a replacement for provider-side caps.
+
+Existing durable receipts and outstanding calls are backfilled using known verified model ceilings. Existing signed cohort entries are preserved without rewriting signatures. Potentially paid current-month legacy entries that lack exact durable call/run links are counted as unresolved: paid admission refuses SPEND_HISTORY_UNVERIFIED, monthly totalUsd isnull, and completeness isfalse. Unknown prices or liabilities also refuse admission. No zero baseline or timestamp/model matching heuristic is used. A historical audit is required before enabling platform spending against that legacy database; this work did not read or migrate the live database. Future live entries include signed, receipt-validated accounting links.
+
+No public rollout is approved by these two local commits. The reviewed live checkout was not edited, tested or restarted. Deployment target, per-principal gates, persistent encrypted storage/backup, custody provisioning, reviewed secret scan and scoped deployment grants remain with the moderator and deployment-design owners.
+
+## Isolated verification, 2026-10-27 Pacific
+
+Node22.23.2: exact workflow test command280/280, direct35adapterfiles159/159, client/isolation31/31, package-only433/433 and cold-installed433/433, Python bridge6/6; all exit0 with0 failures/skips/cancellations. Fresh root and nested package installs exited0. Pinned TypeScript5.6.3, client build, full production build and whitespace checks exited0. The package and cold consumer could not resolve root tsx; no server-starting package tests or credential-like packed paths were found.
+
+An earlier adapter run overlapping the full CI run had1 failure in l10-live-harness.test.ts. The same fixture passed standalone1/1, and the complete sequential adapter rerun passed159/159 without code changes. The cause of that transient failure is unverified; it is not omitted from the verification margin. No browser rendering, live database, provider generation or deployed runtime was exercised. Independent security and verification review remains required.

@@ -1,20 +1,41 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createHash, sign } from "node:crypto";
-import { mkdtempSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+if (!process.env.NODE_TEST_CONTEXT) {
+  process.stderr.write("TEST_RUNNER_REQUIRED\n");
+  process.exit(64);
+}
+// Install memory-only storage before any application module can initialize.
+await import("./offline-test-home.mjs");
 
 // Import the storage singleton only after switching to an isolated fixture home.
 // Never mutate the real preview's identities, continuity, budgets or database.
 const root=fileURLToPath(new URL("..",import.meta.url));
 const temporary=mkdtempSync(join(tmpdir(),"commons-adapter-tests-"));
 const original=process.cwd();
+const originalAppDir=process.env.AGENT_COMMONS_APP_DIR;
 symlinkSync(join(root,"packages"),join(temporary,"packages"),"dir");
 process.chdir(temporary);
+process.env.AGENT_COMMONS_APP_DIR=temporary;
+writeFileSync("agent-commons.adapters.json", JSON.stringify({ version: 1, defaultAdapter: "preview-bridge" }));
+let fixtureDb: import("node:sqlite").DatabaseSync | undefined;
 try{
+  const {DatabaseSync}=await import("node:sqlite");
+  const {L10AccountingService}=await import("./adapters/l10-accounting");
+  const {L10AccountingStore}=await import("./adapters/l10-accounting-store");
+  const {createFixtureSpendingPolicy}=await import("./adapters/fixture-spending");
+  fixtureDb=new DatabaseSync(":memory:");
+  const accounting=new L10AccountingService(new L10AccountingStore(fixtureDb),{spending:createFixtureSpendingPolicy()});
   const {CohortConsole}=await import("./cohort");
-  const c=new CohortConsole();
+  const c=new CohortConsole(accounting);
+  // Explicit offline probe double; the production preflight never generates text.
+  c.preflightForSlot=async(member,prompt,generation,timeoutMs)=>{
+    return {kind:"offline",text:await c.call(member.model,prompt,generation,timeoutMs)};
+  };
   assert.equal(c.summary().verified,true);
   const denied=["governance","release","integration","sustainability"];
   for(const id of denied)c.recordAdapter(id,"fixture-model",Object.assign(new Error("Fixture access denied"),{code:"ACCESS_DENIED",transportStatus:"PERMISSION_DENIED",retryable:false}));
@@ -39,23 +60,12 @@ try{
   assert.equal(c.state.budget!.attempts-budgetBefore,7);
   assert.equal(c.state.entries.length,retained,"Probes must not become synthetic conversation turns");
   assert.equal(Object.keys(c.state.adapterDiagnostics!).length,7);
-  // R4 (rework 4, item X2, the security reviewer third look): the every() check is now
-  // SLOT-AWARE. The R3 zero-dispatch gate throws MODEL_UNAVAILABLE for
-  // the blocked slots (sustainability, integration) BEFORE the stubbed
-  // c.call is reached, while the non-blocked slots still surface
-  // ACCESS_DENIED from the stubbed call. Every diagnostic must be
-  // non-retryable and unavailable; the code carries either ACCESS_DENIED
-  // (non-blocked) or MODEL_UNAVAILABLE (blocked). The probe counted 7
-  // for 7 slots because the gate runs ahead of dispatch.
-  const SLOTS_BLOCKED = new Set(["sustainability", "integration"]);
+  // All seven slots are eligible; this explicit offline fixture reports honest
+  // access denials without exercising any real provider generation.
   for (const [id, d] of Object.entries(c.state.adapterDiagnostics!)) {
     assert.equal(d.available, false, `${id} must be unavailable`);
     assert.equal(d.retryable, false, `${id} must be non-retryable`);
-    if (SLOTS_BLOCKED.has(id)) {
-      assert.equal(d.code, "MODEL_UNAVAILABLE", `${id} (blocked) must be MODEL_UNAVAILABLE from the R3 gate`);
-    } else {
-      assert.equal(d.code, "ACCESS_DENIED", `${id} (non-blocked) must be ACCESS_DENIED from the stubbed call`);
-    }
+    assert.equal(d.code, "ACCESS_DENIED", `${id} must preserve the offline fixture denial`);
   }
 
   c.state.probing=true;c.state.probeProgress=0;
@@ -268,8 +278,11 @@ try{
   lastEntry.signature = honestSig;
   assert.equal(c.verify(), true, "Honest cohort state verifies after link restored");
 
-  console.log("PASS: denied-model skip, persistent attempt accounting, safe probes, retained continuity, cancellation fencing, concurrency guards, R3 zero-dispatch gate (slot-aware diagnostics), C4 strict-Ed25519 verification, C-1 verify read-only gate, C-2 SPKI prefix check, Item E weak-key strictness pole, Item D existingPublicKey read-only gate, Item F chain-and-hash integrity poles.");
+  console.log("PASS: denied-model skip, persistent attempt accounting, seven-slot offline probes, retained continuity, cancellation fencing, concurrency guards, C4 strict-Ed25519 verification, C-1 verify read-only gate, C-2 SPKI prefix check, Item E weak-key strictness pole, Item D existingPublicKey read-only gate, Item F chain-and-hash integrity poles.");
 }finally{
+  fixtureDb?.close();
+  if(originalAppDir===undefined)delete process.env.AGENT_COMMONS_APP_DIR;
+  else process.env.AGENT_COMMONS_APP_DIR=originalAppDir;
   process.chdir(original);
   rmSync(temporary,{recursive:true,force:true});
 }

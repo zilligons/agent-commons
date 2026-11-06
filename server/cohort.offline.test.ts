@@ -13,6 +13,7 @@ import { AdapterFailure } from "./adapters";
 await import("./offline-test-home.mjs");
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 assert(process.cwd().startsWith(join(root, "node_modules", ".offline-test-homes")));
+writeFileSync("agent-commons.adapters.json", JSON.stringify({ version: 1, defaultAdapter: "preview-bridge" }));
 const trace = join(process.cwd(), "transport-trace.jsonl");
 const originalPath = process.env.PATH;
 process.env.PATH = `${join(root, "server", "fixtures", "bin")}:${originalPath}`;
@@ -24,12 +25,25 @@ assert.equal(memoryOnly.name, ":memory:", "Storage preload must intercept SQLite
 memoryOnly.close();
 assert.equal(existsSync("offline-fixture-do-not-create.db"), false);
 const { CohortConsole, cohortConsole } = await import("./cohort");
+const { DatabaseSync } = await import("node:sqlite");
+const { L10AccountingService } = await import("./adapters/l10-accounting");
+const { L10AccountingStore } = await import("./adapters/l10-accounting-store");
+const { createFixtureSpendingPolicy } = await import("./adapters/fixture-spending");
+const { createOperatorGuard } = await import("./operator");
+const accountingConnections: InstanceType<typeof DatabaseSync>[] = [];
+function memoryAccounting() {
+  const db = new DatabaseSync(":memory:");
+  accountingConnections.push(db);
+  return new L10AccountingService(new L10AccountingStore(db), { spending: createFixtureSpendingPolicy() });
+}
+const fixtureAccounting = memoryAccounting();
 const { storage } = await import("./storage");
 const { foundingCohort } = await import("../shared/cohort");
 const { registerRoutes } = await import("./routes");
 const { default: express } = await import("express");
 const fixture = JSON.parse(readFileSync(join(root, "server/fixtures/offline-model-results.json"), "utf8"));
-const results: { id: string; name: string; model: string; status: string }[] = fixture.results;
+const results: { id: string; name: string; model: string; status: string }[] = fixture.results.map((row: { id: string; name: string; model: string; status: string }) =>
+  row.id === "release" ? { ...row, name: "Argon", model: "gemini_4_argon" } : row);
 
 function calls(): { model: string; scenario: string }[] {
   return existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
@@ -37,6 +51,10 @@ function calls(): { model: string; scenario: string }[] {
 function resetTrace() { writeFileSync(trace, ""); }
 
 function installTestDouble(c: InstanceType<typeof CohortConsole>) {
+  // Explicit offline probe double; no provider generation is exercised by these fixtures.
+  c.preflightForSlot=async(member,prompt,generation,timeoutMs)=>{
+    return {kind:"offline",text:await c.call(member.model,prompt,generation,timeoutMs)};
+  };
   c.call = async (model: string, prompt: string, generation: number, timeoutMs = 80000): Promise<string> => {
     const row = results.find(item => item.model === model);
     if (!row) {
@@ -90,7 +108,7 @@ function installTestDouble(c: InstanceType<typeof CohortConsole>) {
 function fresh() {
   storage.saveCohort({ entries: [], running: false, busy: null, round: 0, limit: 7, error: null,
     statuses: {}, budget: { windowStart: Date.now(), attempts: 0 }, adapterDiagnostics: {} });
-  const c = new CohortConsole();
+  const c = new CohortConsole(fixtureAccounting);
   installTestDouble(c);
   return c;
 }
@@ -109,9 +127,10 @@ after(() => {
   process.env.PATH = originalPath;
   delete process.env.OFFLINE_FIXTURE_TRACE;
   delete process.env.OFFLINE_FIXTURE_SCENARIO;
+  for (const connection of accountingConnections) connection.close();
 });
 
-test("seven exact fixture models check exact models, zero dispatch to blocked slots, and diagnostic fields", async () => {
+test("all seven eligible fixture models preserve exact models and honest diagnostic fields", async () => {
   assert.equal(fixture.runtimeModel, null, "Offline results must never name an executed model");
   assert.deepEqual(results.map(({ id, model }) => ({ id, model })), foundingCohort.map(({ id, model }) => ({ id, model })));
   const c = fresh();
@@ -123,13 +142,8 @@ test("seven exact fixture models check exact models, zero dispatch to blocked sl
   c.state.probing = true;
   c.state.probeProgress = 0;
   await c.probe(c.generation);
-  // L10 zero-dispatch gate blocks sustainability and integration ahead of transport;
-  // the remaining 5 unblocked models are dispatched to the offline test double.
-  const expectedDispatches = results
-    .filter(row => row.id !== "sustainability" && row.id !== "integration")
-    .map(row => row.model);
+  const expectedDispatches = results.map(row => row.model);
   assert.deepEqual(calls().map(call => call.model), expectedDispatches);
-  assert.equal(calls().some(call => call.model === "gemini_3_8_flash" || call.model === "gpt_5_6_terra"), false, "Blocked slots receive zero dispatches");
   assert.equal(c.state.budget!.attempts, 7);
   assert.equal(c.state.probeProgress, 7);
   assert.equal(c.state.probing, false);
@@ -145,9 +159,6 @@ test("seven exact fixture models check exact models, zero dispatch to blocked sl
     if (row.status === "OK") {
       assert.equal(d.code, "OK");
       assert.equal(d.transportStatus, null);
-    } else if (row.id === "sustainability" || row.id === "integration") {
-      assert.equal(d.code, "MODEL_UNAVAILABLE", "L10 zero-dispatch gate sets MODEL_UNAVAILABLE for blocked slots");
-      assert.equal(d.transportStatus, null);
     } else {
       assert.equal(d.code, "ACCESS_DENIED");
       assert.equal(d.transportStatus, "PERMISSION_DENIED");
@@ -156,7 +167,7 @@ test("seven exact fixture models check exact models, zero dispatch to blocked sl
     assert(d.message.length > 0);
     // Note: no-leak privacy property is tested in l10-r9 via static parse failure reasons; vacuous legacy fixture-only string checks removed.
   }
-  const reloaded = new CohortConsole();
+  const reloaded = new CohortConsole(fixtureAccounting);
   assert.deepEqual(reloaded.state.adapterDiagnostics, c.state.adapterDiagnostics);
   assert.equal(JSON.stringify(reloaded.state.entries), retained);
   assert.equal(Object.values(c.state.adapterDiagnostics!).filter(d => d.available).length, 3);
@@ -178,10 +189,10 @@ test("fresh denials skip, explicit probes retry, and the one-hour boundary expir
   c.state.probing = true;
   c.state.probeProgress = 0;
   await c.probe(c.generation);
-  assert.equal(calls().length, 5, "Explicit checks must remain available for freshly denied unblocked models");
+  assert.equal(calls().length, 7, "Explicit offline checks include all seven eligible models");
   assert.equal(c.state.probeProgress, 7, "All 7 slots probed");
   assert.equal(JSON.stringify(c.state.entries), retained);
-  // Deterministic clock: just before expiry no denied call; at expiry all unblocked models retried.
+  // Deterministic clock: just before expiry no denied call; at expiry all seven models are retried.
   const realNow = Date.now;
   const observed = realNow();
   const append = c.append;
@@ -198,7 +209,7 @@ test("fresh denials skip, explicit probes retry, and the one-hour boundary expir
     Date.now = () => observed + 3600000;
     resetTrace(); c.state.running = true;
     await c.run(c.generation);
-    assert.equal(calls().length, 5, "At expiry, unblocked models are retried");
+    assert.equal(calls().length, 7, "At expiry, all seven eligible models are retried");
     assert.equal(boundaryAppends.length, 6, "Only three successes append in each boundary run");
     assert.equal(c.state.entries.length, 3, "Boundary spy must not persist future-dated fixture records");
   } finally { Date.now = realNow; c.append = append; }
@@ -216,6 +227,8 @@ test("HTTP start/probe concurrent requests return 400 and cancel fences a pendin
   resetTrace();
   const app = express();
   app.use(express.json());
+  const operatorToken = "cohort-offline-fixture-only";
+  app.use(createOperatorGuard({ env: {}, token: () => operatorToken }));
   const server = createServer(app);
   await registerRoutes(server, app);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -223,13 +236,17 @@ test("HTTP start/probe concurrent requests return 400 and cancel fences a pendin
   assert(address && typeof address === "object" && address.address === "127.0.0.1");
   const base = `http://127.0.0.1:${address.port}`;
   const post = (path: string, body = {}) => fetch(`${base}/api/cohort/${path}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${operatorToken}`, Origin: base }, body: JSON.stringify(body),
   });
+  const originalAccounting = Object.getOwnPropertyDescriptor(c, "injectedAccounting");
+  // Fixture-only seam: routes retain the singleton, while this test supplies its own accounting policy.
+  Object.defineProperty(c, "injectedAccounting", { configurable: true, writable: true, value: memoryAccounting() });
   try {
+    assert.equal((await fetch(`${base}/api/cohort`)).status, 401, "API reads require the fixture operator token");
     const startedResponse = await post("probe");
     assert.equal(startedResponse.status, 200, JSON.stringify(await startedResponse.json()));
     await waitFor(() => calls().length === 1);
-    const started = await (await fetch(`${base}/api/cohort`)).json() as any;
+    const started = await (await fetch(`${base}/api/cohort`, { headers: { Authorization: `Bearer ${operatorToken}` } })).json() as any;
     assert.equal(started.probing, true);
     assert.equal(started.busy, "continuity");
     assert.equal(started.probeProgress, 0);
@@ -257,6 +274,8 @@ test("HTTP start/probe concurrent requests return 400 and cancel fences a pendin
     assert.equal(c.state.entries.length, 3);
   } finally {
     c.pause();
+    if (originalAccounting) Object.defineProperty(c, "injectedAccounting", originalAccounting);
+    else Reflect.deleteProperty(c, "injectedAccounting");
     delete (cohortConsole as any).call;
     process.env.OFFLINE_FIXTURE_SCENARIO = "mixed";
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -289,20 +308,20 @@ test("unknown/empty/malformed failures create no turns and timeout remains retry
 });
 
 test("legacy Python preview bridge refuses unconditionally with zero child spawns", async () => {
-  const unconfigured = new CohortConsole();
+  const unconfigured = new CohortConsole(fixtureAccounting);
   const traceLen = calls().length;
 
-  // 1. Blocked models refuse at the zero-dispatch gate ahead of transport selection
+  // Eligible historical models still cannot use the unmetered legacy bridge.
   await assert.rejects(
     unconfigured.call("gemini_3_8_flash", "prompt", 0),
-    (err: any) => err.code === "MODEL_UNAVAILABLE" && err.retryable === false
+    (err: any) => err.code === "LIMIT_UNSUPPORTED" && err.retryable === false
   );
   await assert.rejects(
     unconfigured.call("gpt_5_6_terra", "prompt", 0),
-    (err: any) => err.code === "MODEL_UNAVAILABLE" && err.retryable === false
+    (err: any) => err.code === "LIMIT_UNSUPPORTED" && err.retryable === false
   );
 
-  // 2. Unblocked models refuse at the live accounting gate (closed legacy path)
+  // The same accounting refusal applies to every legacy provider model.
   await assert.rejects(
     unconfigured.call("claude_fable_5_1", "prompt", 0),
     (err: any) => err.code === "LIMIT_UNSUPPORTED" && err.retryable === false

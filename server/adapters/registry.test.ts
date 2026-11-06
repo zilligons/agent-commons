@@ -22,7 +22,8 @@ function withEnv(name: string, value: string | undefined, run: () => void) {
 }
 
 // 1. unknown adapter name → MODEL_UNAVAILABLE
-assert.deepEqual(KNOWN_ADAPTERS, ["preview-bridge", "stub", "l10-cli"], "registry should ship three adapters");
+assert.deepEqual(KNOWN_ADAPTERS, ["preview-bridge", "stub", "l10-cli", "openai-responses", "anthropic-messages", "google-gemini"], "registry should ship six active adapters without archived xAI");
+assert.throws(() => resolveAdapter("xai-responses"), (error: unknown) => error instanceof AdapterFailure && error.code === "MODEL_UNAVAILABLE" && /not registered/.test(error.message));
 assert.throws(
   () => resolveAdapter("not-a-real-adapter"),
   (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && e.retryable === false,
@@ -46,12 +47,30 @@ withEnv("AGENT_COMMONS_OFFLINE", "1", () => {
     (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && /AGENT_COMMONS_OFFLINE/.test(e.message),
     "offline kill switch must refuse l10-cli adapter",
   );
+  assert.throws(
+    () => resolveAdapter("openai-responses"),
+    (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && /AGENT_COMMONS_OFFLINE/.test(e.message),
+    "offline kill switch must refuse the provider adapter",
+  );
+  for (const name of ["anthropic-messages", "google-gemini"]) assert.throws(
+    () => resolveAdapter(name),
+    (e: unknown) => e instanceof AdapterFailure && e.code === "MODEL_UNAVAILABLE" && /AGENT_COMMONS_OFFLINE/.test(e.message),
+    "offline kill switch must refuse every provider adapter",
+  );
 });
 
 // 4. l10-cli resolves with makesLiveCalls: true
 const l10 = resolveAdapter("l10-cli");
 assert.equal(l10.name, "l10-cli");
 assert.equal(l10.makesLiveCalls, true);
+const provider = resolveAdapter("openai-responses");
+assert.equal(provider.name, "openai-responses");
+assert.equal(provider.makesLiveCalls, true);
+for (const name of ["anthropic-messages", "google-gemini"]) {
+  const adapter = resolveAdapter(name);
+  assert.equal(adapter.name, name);
+  assert.equal(adapter.makesLiveCalls, true);
+}
 
 // 5. stub resolves with makesLiveCalls: false (no offline required)
 const stub = resolveAdapter("stub");

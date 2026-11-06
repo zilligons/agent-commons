@@ -13,6 +13,8 @@ if (isMainThread && process.env.NODE_TEST_CONTEXT) {
   const homes = join(root, "node_modules", ".offline-test-homes");
   mkdirSync(homes, { recursive: true });
   const home = mkdtempSync(join(homes, "test-"));
+  process.env.AGENT_COMMONS_APP_DIR = home;
+  process.env.AGENT_COMMONS_DATA_DIR = home;
   symlinkSync(join(root, "packages"), join(home, "packages"), "dir");
   symlinkSync(join(root, "docs"), join(home, "docs"), "dir");
   process.env.TMPDIR = home;

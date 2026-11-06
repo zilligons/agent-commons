@@ -13,6 +13,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { refusedReason, buildChildEnv, scrubEnv, L10_REFUSED_PREFIXES, L10_REFUSED_SINGLES, L10EnvBuilderError } from "./l10-env";
+import { CLOSED_CONSOLE_ALLOWLIST, COMMON_CHILD_ENV } from "./l10-env";
+import { L10_APP_CONTROL_ALLOWLIST } from "../dotenv-guard";
+
+for (const name of ["AGENT_COMMONS_OPENAI_API_KEY", "AGENT_COMMONS_PROVIDER_REQUESTS_ENABLED", "AGENT_COMMONS_ANTHROPIC_API_KEY", "AGENT_COMMONS_XAI_API_KEY"]) {
+  assert.ok((CLOSED_CONSOLE_ALLOWLIST as readonly string[]).includes(name), `${name} is console-only`);
+  assert.ok(!(COMMON_CHILD_ENV as readonly string[]).includes(name), `${name} must not enter CLI child environments`);
+  assert.ok(!(L10_APP_CONTROL_ALLOWLIST as readonly string[]).includes(name), `${name} must not be enabled by dotenv controls`);
+}
 
 /** CONTROL predicate table — names that MUST be refused. */
 const REFUSED = [

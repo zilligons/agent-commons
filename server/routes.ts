@@ -4,6 +4,7 @@ import { z } from "zod";
 import { engine, evaluate } from "./engine";
 import { networkConsole } from "./network";
 import { cohortConsole } from "./cohort";
+import { SOL_GENERATION_CHECK_PATH, solGenerationCheckEnabled } from "./operator";
 const startSchema = z.object({
   mode: z.enum(["simulation", "live"]),
   limit: z.number().int().min(3).max(12),
@@ -18,14 +19,24 @@ export async function registerRoutes(
   app: Express,
 ): Promise<Server> {
   app.get("/api/cohort", (_req,res)=>res.json(cohortConsole.summary()));
+  app.get("/api/cohort/usage", (_req,res)=>{
+    try{res.json(cohortConsole.platformUsage())}
+    catch{res.status(503).json({code:"SPEND_HISTORY_UNVERIFIED",message:"Platform spending evidence is unavailable"})}
+  });
   app.post("/api/cohort/start", (req,res)=>{
     try { const {limit}=z.object({limit:z.number().int().min(7).max(28)}).strict().parse(req.body);
       cohortConsole.start(limit);res.json({ok:true});
     }catch(e:any){res.status(400).json({message:e.message})}
   });
   app.post("/api/cohort/pause",(_req,res)=>{cohortConsole.pause();res.json({ok:true})});
+  if (solGenerationCheckEnabled()) app.post(SOL_GENERATION_CHECK_PATH,async(req,res)=>{
+    try{
+      z.object({}).strict().parse(req.body??{});
+      res.json(await cohortConsole.runSolGenerationCheck());
+    }catch(e:any){res.status(400).json({code:e.code??"INVALID_REQUEST",message:"Sol generation check refused; no retry was attempted"})}
+  });
   app.post("/api/cohort/probe",(_req,res)=>{
-    try{cohortConsole.startProbe();res.json({ok:true,scope:"exact-model transport checks; no substitutions",maxCalls:7})}
+    try{cohortConsole.startProbe();res.json({ok:true,scope:"provider counting preflight only; generation not tested",maxChecks:7,maxGenerationCalls:0})}
     catch(e:any){res.status(400).json({message:e.message})}
   });
   app.post("/api/cohort/import",(_req,res)=>{try{res.json(cohortConsole.importReports())}catch(e:any){res.status(400).json({message:e.message})}});
@@ -137,5 +148,7 @@ export async function registerRoutes(
       codec: evaluate(engine.state.lexicon),
     });
   });
+  // Vite's catch-all also accepts POST; unknown API routes must terminate here.
+  app.use("/api", (_req,res) => res.status(404).json({ message: "Unknown API route" }));
   return httpServer;
 }

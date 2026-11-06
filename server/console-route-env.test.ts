@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { CLOSED_CONSOLE_ALLOWLIST } from "./adapters/l10-env";
+import { CLOSED_CONSOLE_ALLOWLIST, COMMON_CHILD_ENV, buildClosedConsoleEnv, buildChildEnv } from "./adapters/l10-env";
 import { L10_APP_CONTROL_ALLOWLIST } from "./dotenv-guard";
 import { L10_BIN_ENV_NAMES } from "./adapters/config";
 
@@ -17,6 +17,37 @@ import { L10_BIN_ENV_NAMES } from "./adapters/config";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 const routeNames = Object.values(L10_BIN_ENV_NAMES) as string[];
+
+test("host extensions and Sol activation are console-process-only controls", () => {
+  for (const name of ["AGENT_COMMONS_ALLOWED_HOSTS", "AGENT_COMMONS_SOL_GENERATION_CHECK_ENABLED"]) {
+    assert.ok((CLOSED_CONSOLE_ALLOWLIST as readonly string[]).includes(name));
+    assert.ok(!L10_APP_CONTROL_ALLOWLIST.includes(name));
+  }
+});
+
+test("spending controls survive the console rebuild but never dotenv or provider child environments", () => {
+  const controls = { AGENT_COMMONS_MAX_DAILY_RUNS: "3", AGENT_COMMONS_MAX_DAILY_TOKENS: "1000", AGENT_COMMONS_MAX_MONTHLY_USD: "2.50" };
+  const previous = Object.fromEntries(Object.keys(controls).map(name => [name, process.env[name]]));
+  const dir = mkdtempSync(join(tmpdir(), "console-spending-env-"));
+  try {
+    Object.assign(process.env, controls);
+    const consoleEnv = buildClosedConsoleEnv(controls);
+    const options = { route: "codex" as const, pole: "MUTANT" as const, runId: "spending-env-fixture", home: dir, runDir: dir };
+    const child = buildChildEnv(options);
+    for (const [name, value] of Object.entries(controls)) {
+      assert.equal(consoleEnv[name], value);
+      assert(!L10_APP_CONTROL_ALLOWLIST.includes(name));
+      assert(!(COMMON_CHILD_ENV as readonly string[]).includes(name));
+      assert.equal(child[name], undefined);
+      assert.throws(() => buildChildEnv({ ...options, additions: { [name]: value } }), /unsupported child-env addition/);
+    }
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("every L10 route env name survives the console env rebuild and is never a .env name", () => {
   for (const name of routeNames) {

@@ -47,6 +47,9 @@ import {
 import type { Agent, CommonsState, Message } from "@shared/schema";
 import NetworkConsole from "./NetworkConsole";
 import CohortConsole from "./CohortConsole";
+import OperatorAccess from "./OperatorAccess";
+import { useOperatorAccess } from "./lib/useOperatorAccess";
+import { OperatorRequestError } from "./lib/operatorToken";
 import "./network.css";
 import "./cohort.css";
 type State = CommonsState & {
@@ -145,11 +148,12 @@ function NetworkMap({
   );
 }
 function Workspace() {
+  const access = useOperatorAccess();
   const {
     data: s,
     isLoading,
     error,
-  } = useQuery<State>({ queryKey: ["/api/state"], refetchInterval: 1500 });
+  } = useQuery<State>({ queryKey: ["/api/state"], refetchInterval: 1500, enabled: access.configured });
   const [view, setView] = useState("cohort"),
     [channel, setChannel] = useState("commons"),
     [search, setSearch] = useState(""),
@@ -493,7 +497,7 @@ function Workspace() {
           )}
           {error && (
             <div className="error-banner" role="alert">
-              The network is unreachable.{" "}
+              {error instanceof OperatorRequestError ? error.message : "The network is unreachable."}{" "}
               <button
                 data-testid="retry-state"
                 onClick={() =>
@@ -1621,7 +1625,7 @@ function Workspace() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Workspace />
+      <OperatorAccess><Workspace /></OperatorAccess>
     </QueryClientProvider>
   );
 }

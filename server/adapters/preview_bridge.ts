@@ -17,8 +17,8 @@ import { join } from "node:path";
 import { AdapterFailure, type AdapterRequest, type AdapterResult, type AdapterResultTyped, type ModelAdapter } from "./types";
 import { buildChildEnv, assertSpawnTripwire } from "./l10-env";
 import { PYTHON_ABS } from "./l10-process";
-import { isBlockedSlotOrModel } from "./l10-routes";
 import { assertLiveAccountingGate } from "./l10-limits";
+import { assertAccountingPermit } from "./l10-admission";
 
 export class PreviewBridgeAdapter implements ModelAdapter {
   readonly name = "preview-bridge";
@@ -30,26 +30,13 @@ export class PreviewBridgeAdapter implements ModelAdapter {
         reject(new AdapterFailure("MODEL_UNAVAILABLE", "missing model literal", null, false));
         return;
       }
-      // R3: direct legacy entry must enforce eligibility policy before transport selection or spawn.
-      if (
-        isBlockedSlotOrModel(req.slotId) ||
-        isBlockedSlotOrModel(req.historicalModel) ||
-        isBlockedSlotOrModel(req.runtimeModel)
-      ) {
-        reject(new AdapterFailure(
-          "MODEL_UNAVAILABLE",
-          `slot or model ${req.slotId || req.runtimeModel} is blocked; L10 does not dispatch it (zero-dispatch gate)`,
-          null,
-          false,
-        ));
-        return;
-      }
       // R3 (rework 3): preview-bridge is a live path; offline blocks it.
       if (process.env.AGENT_COMMONS_OFFLINE === "1") {
         reject(new AdapterFailure("MODEL_UNAVAILABLE","preview-bridge makes live calls; AGENT_COMMONS_OFFLINE=1 blocks it",null,false));
         return;
       }
       try {
+        assertAccountingPermit(req.accountingPermit);
         assertLiveAccountingGate();
       } catch (e) {
         reject(e);

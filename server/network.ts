@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createPublicKey,
   createPrivateKey,
@@ -13,6 +14,7 @@ import {
 } from "../packages/agent-commons/src/profiles.mjs";
 import type { Profile } from "../packages/agent-commons/src/index.d.ts";
 import { storage } from "./storage";
+import { resolveRuntimePaths } from "./runtime-paths";
 import { isOffline, isLoopbackUrl } from "../packages/agent-commons/src/offline.mjs";
 import { SELF_CERTIFYING_NAMESPACES } from "../packages/agent-commons/src/uuaid-namespace.mjs";
 // L3 Slice 2 v6 §2.3: runtime, loopback transport, and memory store integration
@@ -25,9 +27,30 @@ type NetworkState = {
   checks: any[];
   checkedAt: string | null;
 };
+
+function publicIdentityFromPem(pem: string, uuaidNamespace: string) {
+  if (!SELF_CERTIFYING_NAMESPACES.includes(uuaidNamespace))
+    throw new Error("Console public key has no self-certifying UUAID namespace");
+  const publicKey = createPublicKey(pem);
+  const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
+  const hex = createHash("sha256").update(raw).digest("hex").slice(0, 32);
+  const local = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return { uuaid: `uuaid:${uuaidNamespace}:agent:${local}`, publicKeyHex: raw.toString("hex"), publicKey };
+}
+
+function httpsDocumentUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : null;
+  } catch { return null; }
+}
+
 export class NetworkConsole {
   state: NetworkState;
+  private publicIdentities = new Map<string, ReturnType<typeof publicIdentityFromPem>>();
   constructor() {
+    const { appDir } = resolveRuntimePaths();
     this.state = storage.loadNetwork() ?? {
       profiles: [],
       contributions: [],
@@ -40,7 +63,7 @@ export class NetworkConsole {
           createProfile(
             JSON.parse(
               readFileSync(
-                `packages/agent-commons/profiles/${file}.json`,
+                join(appDir, "packages/agent-commons/profiles", `${file}.json`),
                 "utf8",
               ),
             ),
@@ -50,11 +73,13 @@ export class NetworkConsole {
       this.save();
     }
     if(!this.state.profiles.some(p=>p.namespace==="tenant/zilligon.com")){
-      this.state.profiles.push(createProfile(JSON.parse(readFileSync("packages/agent-commons/profiles/zilligon.com.json","utf8"))));
+      this.state.profiles.push(createProfile(JSON.parse(readFileSync(join(appDir,"packages/agent-commons/profiles/zilligon.com.json"),"utf8"))));
       // Existing content-addressed plural profiles and signed contributions are
       // retained as historical evidence rather than silently rewritten.
       this.save();
     }
+    // Startup initialization is explicit; summaries only consult public material.
+    for (const id of ["atlas", "lyra", "orion", "sentinel"]) this.identity(id);
   }
   cachedVerification: any = null;
   save() {
@@ -280,23 +305,18 @@ export class NetworkConsole {
   }
   identity(id: string) {
     const keys = storage.key(id);
-    // Fail closed: a namespace a key alone cannot claim, or none at all, is never
-    // turned into a key-derived id.
-    if (!SELF_CERTIFYING_NAMESPACES.includes(keys.uuaidNamespace))
-      throw new Error(`Console key ${id} has no self-certifying UUAID namespace`);
-    const publicKey = createPublicKey(keys.publicKey),
-      privateKey = createPrivateKey(keys.privateKey);
-    const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
-    // Same published Pillar derivation, without claiming registry registration.
-    // The namespace is the one recorded when the key was created, never a default.
-    const hex = createHash("sha256").update(raw).digest("hex").slice(0, 32);
-    const local = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-    return {
-      uuaid: `uuaid:${keys.uuaidNamespace}:agent:${local}`,
-      publicKeyHex: raw.toString("hex"),
-      publicKey,
-      privateKey,
-    };
+    const identity = publicIdentityFromPem(keys.publicKey, keys.uuaidNamespace);
+    this.publicIdentities.set(id, identity);
+    return { ...identity, privateKey: createPrivateKey(keys.privateKey) };
+  }
+  publicIdentity(id: string) {
+    const cached = this.publicIdentities.get(id);
+    if (cached) return cached;
+    const keys = storage.existingPublicIdentity(id);
+    if (!keys) return null;
+    const identity = publicIdentityFromPem(keys.publicKey, keys.uuaidNamespace);
+    this.publicIdentities.set(id, identity);
+    return identity;
   }
   prepare(profileId: string) {
     const profile = this.state.profiles.find((p) => p.id === profileId);
@@ -375,7 +395,7 @@ export class NetworkConsole {
           code: r.code,
           stage: r.stage,
           hash: r.content_hash,
-          url: r.doc_url,
+          url: httpsDocumentUrl(r.doc_url),
         }));
       checks.push({
         service: "IAASO register",
@@ -438,6 +458,9 @@ export class NetworkConsole {
   summary() {
     return {
       ...this.state,
+      checks: this.state.checks.map(check => ({ ...check, ...(Array.isArray(check.standards) ? {
+        standards: check.standards.map((standard: any) => ({ ...standard, url: httpsDocumentUrl(standard.url) })),
+      } : {}) })),
       product: "Agent Commons",
       version: "0.2.0-alpha.3",
       protocol: "agent-commons/1",
@@ -460,7 +483,7 @@ export class NetworkConsole {
       cachedVerification: this.cachedVerification ?? null,
       identities: ["atlas", "lyra", "orion", "sentinel"].map((id) => ({
         id,
-        uuaid: this.identity(id).uuaid,
+        uuaid: this.publicIdentity(id)?.uuaid ?? null,
         trust: "local-adapter-key-not-registry-registered",
       })),
       targets: [

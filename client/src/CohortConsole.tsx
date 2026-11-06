@@ -1,27 +1,31 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "./lib/queryClient";
+import { OperatorRequestError } from "./lib/operatorToken";
+import { useOperatorAccess } from "./lib/useOperatorAccess";
 import { Play, Pause, ArrowDownToLine, ShieldCheck, Brain, GitBranch } from "lucide-react";
 type Cohort = {
   running:boolean;probing?:boolean;probeProgress?:number;busy:string|null;round:number;limit:number;error:string|null;verified:boolean;
   members:{id:string;name:string;label:string;role:string;provider:string;uuaid:string;status:string;memories:number;contributionStatus:string;adapter?:{model:string;historicalModel?:string;available:boolean;code:string;message:string;checkedAt:string;transportStatus:string|null;retryable:boolean}|null}[];
-  entries:{id:string;agent:string;stage:string;body:string;time:string;hash:string;execution:string}[];
+  entries:{id:string;agent:string;stage:string;body:string;time:string;hash:string;execution:string;model?:string}[];
   memory:{local:string;remote:string};
 };
 export default function CohortConsole(){
-  const {data:s,error}=useQuery<Cohort>({queryKey:["/api/cohort"],refetchInterval:1500});
+  const access=useOperatorAccess();
+  const {data:s,error}=useQuery<Cohort>({queryKey:["/api/cohort"],refetchInterval:1500,enabled:access.configured});
   const [limit,setLimit]=useState(7),[selected,setSelected]=useState("all"),[notice,setNotice]=useState("");
   const action=useMutation({mutationFn:async(path:string)=>(await apiRequest("POST",path,path.endsWith("/start")?{limit}:{})).json(),
     onSuccess:()=>{queryClient.invalidateQueries({queryKey:["/api/cohort"]});setNotice("")},
-    onError:(e:Error)=>setNotice(e.message)});
+    onError:(e:Error)=>setNotice(e instanceof OperatorRequestError?e.message:"The action could not be completed. Please try again.")});
   async function download(){
     try{
       const data=await(await apiRequest("GET","/api/cohort/export")).json();
       const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
       const a=document.createElement("a");a.href=url;a.download="agent-commons-cohort.json";a.click();URL.revokeObjectURL(url);
-    }catch(e:any){setNotice(e.message)}
+    }catch(e:unknown){setNotice(e instanceof OperatorRequestError?e.message:"The export could not be completed. Please try again.")}
   }
-  if(error)return <p role="alert">Cohort unavailable: {error.message}</p>;
+  if(!access.configured)return <p>Workspace locked. Save an operator token to continue.</p>;
+  if(error)return <p role="alert">{error instanceof OperatorRequestError?error.message:"Cohort unavailable. Check the connection and try again."}</p>;
   if(!s)return <p>Loading persistent cohort…</p>;
   return <section className="cohort-console">
     <div className="network-hero">
@@ -43,7 +47,7 @@ export default function CohortConsole(){
     </div>
     <p className="cohort-status">{s.probing?`Adapter check ${(s.probeProgress??0)+1}/7 · ${s.members.find(a=>a.id===s.busy)?.name??"checking"}`:s.running?`Turn ${s.round+1}/${s.limit} · ${s.members.find(a=>a.id===s.busy)?.name??"arbitrating"}`:`Paused · ${s.entries.length} retained entries`} · {s.verified?"Local ledger integrity verified":"Integrity failure"} · No synthetic fallback</p>
     <p className="cohort-status">Retained Computer build reports and live preview model access are separate. A model-access denial does not mean the agent lost its identity or memory.</p>
-    {(notice||s.error)&&<p role="alert" className="cohort-error">{notice||s.error}</p>}
+    {(notice||s.error)&&<p role="alert" className="cohort-error">{notice||"The cohort reported an error. Check the adapter status before retrying."}</p>}
     <div className="cohort-grid">{s.members.map(a=><button key={a.id} className={`cohort-card ${selected===a.id?"selected":""}`} onClick={()=>setSelected(selected===a.id?"all":a.id)}>
       <div className="cohort-card-top"><span className="cohort-monogram">{a.name[0]}</span><span className="pill">{a.status}</span></div>
       <h3>{a.name}<small>{a.provider}</small></h3><strong>{a.label}</strong><p>{a.role}</p>
@@ -56,7 +60,7 @@ export default function CohortConsole(){
     </div>
     <div className="section-actions"><h2>Contribution and collaboration ledger</h2>{selected!=="all"&&<button className="button secondary" onClick={()=>setSelected("all")}>Show all agents</button>}</div>
     <div className="cohort-feed">{s.entries.filter(e=>selected==="all"||e.agent===selected).slice().reverse().map(e=><article key={e.id} className="cohort-entry">
-      <header><strong>{s.members.find(a=>a.id===e.agent)?.name??e.agent}</strong><span className="pill">{e.stage}</span><time>{new Date(e.time).toLocaleTimeString()}</time></header>
+      <header><strong>{e.agent==="release"&&e.model&&["grok_4_7","grok-4.7"].includes(e.model)?"Historical release agent":s.members.find(a=>a.id===e.agent)?.name??e.agent}</strong><span className="pill">{e.stage}</span><time>{new Date(e.time).toLocaleTimeString()}</time></header>
       <pre>{e.body}</pre><footer>{e.execution} · SHA-256 {e.hash.slice(0,16)}</footer>
     </article>)}
     {!s.entries.length&&<div className="cohort-empty"><Brain size={28}/><h3>Independent contributors are building.</h3><p>Refresh their completed build reports, or run a bounded live session to ask what each needs to contribute productively.</p></div>}</div>

@@ -12,9 +12,10 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PYTHON_ABS, resolvePythonAbs } from "./l10-process";
-
-const CLOSED_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 function run(cmd: string, args: string[], env: Record<string, string>): Promise<{ rc: number | null; error: Error | null; out: string }> {
   return new Promise((resolve) => {
@@ -27,24 +28,29 @@ function run(cmd: string, args: string[], env: Record<string, string>): Promise<
 }
 
 async function main() {
-  // Resolution sanity: python resolves on this host's PATH.
-  const resolved = resolvePythonAbs(process.env.PATH ?? "");
-  assert.ok(resolved, "python must resolve on the host PATH");
-  assert.equal(PYTHON_ABS, resolved, "module-frozen path equals one resolution");
+  const closedPath = mkdtempSync(join(tmpdir(), "l10-python-path-"));
+  try {
+    // Resolution sanity: python resolves on this host's PATH.
+    const resolved = resolvePythonAbs(process.env.PATH ?? "");
+    assert.ok(resolved, "python must resolve on the host PATH");
+    assert.equal(PYTHON_ABS, resolved, "module-frozen path equals one resolution");
 
-  // CONTROL — absolute interpreter + closed child PATH works.
-  const control = await run(PYTHON_ABS!, ["-c", 'print("OK")'], { PATH: CLOSED_PATH });
-  assert.equal(control.error, null, `CONTROL: absolute python must spawn (got ${control.error})`);
-  assert.equal(control.rc, 0, `CONTROL rc=${control.rc}`);
-  assert.equal(control.out.trim(), "OK", "CONTROL stdout OK");
+    // CONTROL — absolute interpreter + closed child PATH works.
+    const control = await run(PYTHON_ABS!, ["-c", 'print("OK")'], { PATH: closedPath });
+    assert.equal(control.error, null, `CONTROL: absolute python must spawn (got ${control.error})`);
+    assert.equal(control.rc, 0, `CONTROL rc=${control.rc}`);
+    assert.equal(control.out.trim(), "OK", "CONTROL stdout OK");
 
-  // MUTANT — bare `python` under the same closed PATH is ENOENT
-  // (the exact regression the security reviewer measured at the three spawn sites).
-  const mutant = await run("python", ["-c", 'print("OK")'], { PATH: CLOSED_PATH });
-  assert.ok(mutant.error, "MUTANT: bare python under closed PATH must fail");
-  assert.match(mutant.error!.message, /ENOENT/, `MUTANT error must be ENOENT (got ${mutant.error!.message})`);
+    // MUTANT — bare `python` under the same closed PATH is ENOENT
+    // This directly tests absolute versus bare interpreter resolution.
+    const mutant = await run("python", ["-c", 'print("OK")'], { PATH: closedPath });
+    assert.ok(mutant.error, "MUTANT: bare python under closed PATH must fail");
+    assert.match(mutant.error!.message, /ENOENT/, `MUTANT error must be ENOENT (got ${mutant.error!.message})`);
 
-  console.log(`PASS B2: CONTROL absolute ${PYTHON_ABS} under closed PATH rc=0 stdout=OK; MUTANT bare python ENOENT.`);
+    console.log(`PASS B2: CONTROL absolute ${PYTHON_ABS} under closed PATH rc=0 stdout=OK; MUTANT bare python ENOENT.`);
+  } finally {
+    rmSync(closedPath, { recursive: true, force: true });
+  }
 }
 
 main().catch((e) => { console.error("FAIL:", e); process.exit(1); });

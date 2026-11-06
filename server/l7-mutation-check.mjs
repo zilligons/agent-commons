@@ -27,6 +27,8 @@ function cleanEnv(extra = {}) {
   delete env.L7_NETWORK_MODULE;
   delete env.L7_DB_HOME;
   delete env.L7_SCRATCH_LEAK;
+  delete env.AGENT_COMMONS_DATA_DIR;
+  delete env.AGENT_COMMONS_APP_DIR;
   return { ...env, ...extra };
 }
 

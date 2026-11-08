@@ -2,7 +2,7 @@ export const CANONICAL_CHANNEL_REGEX = /^channel:\/\/[a-z0-9._-]+\/[a-z0-9._-]+\
 export const RESERVED_CHANNEL_PREFIX = /^channel:/i;
 
 /**
- * Classifies an inbound or outbound thread parameter according to L3 Section 4.2.
+ * Classifies an inbound or outbound thread parameter.
  * Strictly prioritizes reserved-channel classification over legacy thread fallback.
  */
 export function classifyThread(thread, policy) {

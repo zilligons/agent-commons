@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: opening a claim (spec v3.2 section 11.3). One path
+// Cloud Commons relay: opening a claim (spec v3.2 section 11.3). One path
 // for a member's own claim, a lane owner's task.assign and the new claim a seat's
 // "changes" issues, so epochs, leases and caps cannot drift between them.
 // Call inside the caller's transaction.

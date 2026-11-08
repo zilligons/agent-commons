@@ -1,4 +1,4 @@
-// L3 Slice 2 v6 §2.2: concrete transports and channel/tenant declarations
+// Concrete transports and channel/tenant declarations
 import type { MessageTransport } from './transport.mjs';
 
 export interface Profile {

@@ -231,7 +231,59 @@ jobs:
           fs.writeFileSync(path.join(consumer, "package.json"), "{\"name\":\"agent-commons-cold-install-check\",\"private\":true,\"version\":\"0.0.0\"}\n");
           execFileSync("npm", ["install", "--ignore-scripts", tarball], {cwd: consumer, stdio: "inherit"});
           const prefix = path.join(consumer, "node_modules", "@uuaid", "agent-commons");
-          execFileSync("npm", ["test"], {cwd: prefix, stdio: "inherit"});
+          // Installed-package checks. The test suite is not shipped, so these replace an installed-copy npm test.
+          {
+            // 1. Exact contents: the tarball holds exactly the git-tracked files of the shipped entries.
+            const entries = ["package.json", "README.md", "LICENSE", "NOTICE", "PROVENANCE.json", "CONFORMANCE.md", "bin", "src", "profiles", "examples"];
+            const expected = new Set(execFileSync("git", ["ls-files", "-z", "--", ...entries], {encoding: "utf8"}).split("\0").filter(Boolean).map((name) => "package/" + name));
+            const packedNames = names.filter((name) => !name.endsWith("/"));
+            const packedSet = new Set(packedNames);
+            const missing = [...expected].filter((name) => !packedSet.has(name));
+            const extra = packedNames.filter((name) => !expected.has(name));
+            const banned = packedNames.filter((name) => /^package\/(test|docs|scripts)\//.test(name) || /\.test\.mjs$/.test(name) || name.includes("relay-fixtures"));
+            if (missing.length || extra.length || banned.length || packedSet.size !== packedNames.length) {
+              for (const name of missing) console.error("missing " + name);
+              for (const name of extra) console.error("extra " + name);
+              for (const name of banned) console.error("forbidden " + name);
+              throw new Error("check 1 failed: the tarball is not exactly the shipped file set");
+            }
+            console.log("check 1: tarball files " + packedNames.length + " = git ls-files " + expected.size);
+            // 2. Every export resolves: each installed exports key imports by its bare specifier from the consumer.
+            const installedPkg = JSON.parse(fs.readFileSync(path.join(prefix, "package.json"), "utf8"));
+            const exportKeys = Object.keys(installedPkg.exports || {}).filter((key) => key !== "./package.json");
+            if (exportKeys.length === 0) throw new Error("check 2 failed: the installed package declares no exports");
+            const importScript = [
+              "const keys = JSON.parse(process.env.AGENT_COMMONS_EXPORT_KEYS);",
+              "const failed = [];",
+              "for (const key of keys) {",
+              "  const specifier = key === '.' ? '@uuaid/agent-commons' : '@uuaid/agent-commons/' + key.slice(2);",
+              "  try { await import(specifier); } catch (error) { failed.push(specifier + ' ' + String(error && error.code || error)); }",
+              "}",
+              "if (failed.length) { console.error(failed.join('\\n')); process.exit(1); }",
+              "console.log(String(keys.length));"
+            ].join("\n");
+            let imported;
+            try {
+              imported = execFileSync(process.execPath, ["--input-type=module", "-e", importScript], {cwd: consumer, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], env: {...process.env, AGENT_COMMONS_EXPORT_KEYS: JSON.stringify(exportKeys)}}).trim();
+            } catch {
+              throw new Error("check 2 failed: an exports entry did not import by its bare specifier");
+            }
+            if (imported !== String(exportKeys.length)) throw new Error("check 2 failed: imported " + imported + " of " + exportKeys.length + " exports");
+            console.log("check 2: exports imported " + imported + " of " + exportKeys.length);
+            // 3. Vendored provenance: every PROVENANCE.json file hash equals the installed src/vendor/pillar file.
+            const crypto = require("node:crypto");
+            const provenance = JSON.parse(fs.readFileSync(path.join(prefix, "PROVENANCE.json"), "utf8"));
+            const vendored = Object.entries(provenance.files || {});
+            if (vendored.length === 0) throw new Error("check 3 failed: PROVENANCE.json lists no vendored files");
+            const mismatched = vendored.filter(([file, expectedSha]) => {
+              if (path.isAbsolute(file) || file.split("/").includes("..")) return true;
+              const target = path.join(prefix, "src", "vendor", "pillar", file);
+              return !fs.existsSync(target) || crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") !== expectedSha;
+            });
+            if (mismatched.length) throw new Error("check 3 failed: vendored files differ from PROVENANCE.json: " + mismatched.map(([file]) => file).join(", "));
+            console.log("check 3: vendored files match PROVENANCE.json " + vendored.length);
+          }
+          // End of the installed-package checks.
           const cli = path.join(prefix, "bin", "agent-commons.mjs");
           const init = JSON.parse(execFileSync(process.execPath, [cli, "init", "--home", home, "--target", "zilligon.com"], {cwd: consumer, encoding: "utf8"}));
           if (init.target !== "zilligon.com" || init.registryRegistration !== "not-performed" || init.certified !== false) {

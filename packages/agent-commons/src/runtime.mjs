@@ -3,7 +3,7 @@ import { Keychain, seal, open, decrypt, envelopeSha, CarrierClient, jcs } from "
 import { CommonsStore } from "./store.mjs";
 import { RegistryTrust } from "./trust.mjs";
 import { BASE_PROTOCOL, createProfile, verifyProfile, proposeAlias, encode, decode, digest, signDocument, verifyDocument, contribution } from "./profiles.mjs";
-// L3 Slice 2 v6 §2.1: Pluggable transport and channel/tenant admission
+// Pluggable transport and channel/tenant admission
 import { PillarCarrierTransport } from "./transport.mjs";
 import { classifyThread, assertChannelSendAdmission, assertChannelReceiveAdmission, validateTenantBinding } from "./channels.mjs";
 
@@ -11,7 +11,7 @@ import { classifyThread, assertChannelSendAdmission, assertChannelReceiveAdmissi
 const auditEnvelopeId=id=>typeof id==="string"?id:null;
 
 export class AgentCommons {
-  // L3 Slice 2 v6 §2.1: options.transport and channel/tenant policy flags
+  // options.transport and channel/tenant policy flags
   constructor({keychain,store=new CommonsStore(),policy={mode:"local",agents:{}},carriers=[],transport,trust}={}){
     if(!keychain?._identity)throw new Error("A loaded Pillar keychain is required");
     this.keychain=keychain;this.store=store;this.policy=policy;this.trust=trust??new RegistryTrust({policy});this.carriers=carriers;
@@ -114,7 +114,7 @@ export class AgentCommons {
     await this.trust.authorize(this.uuaid,this.publicKey,"commons:contribute");
     return signDocument(this.keychain,"profile-contribution",{contribution:contribution(this.profile(profileId),options)});
   }
-  // L3 Slice 2 v6 §2.1 / §4.2, §4.2.3, §5.2: channel/tenant admission, atomic authenticated admission record
+  // Channel/tenant admission, atomic authenticated admission record
   async send({recipient,profileId,namespace,body,thread="commons",kind="message",deferFlush=false}){
     if(typeof body!=="string"||Buffer.byteLength(body)>32000||typeof thread!=="string"||thread.length>120||!["message","profile-control"].includes(kind))throw new Error("Invalid bounded message");
     const classified=classifyThread(thread,this.policy);
@@ -149,7 +149,7 @@ export class AgentCommons {
     return {queued:queued.map(x=>({recipient:x.envelope.recipient,id:x.envelope.id})),deliveries:await this.flush(),groupPrivacy:"individually-sealed-recipient-copies"};
   }
   flush(){const next=this._flushTail.then(()=>this.flushInternal());this._flushTail=next.catch(()=>{});return next}
-  // L3 Slice 2 v6 §2.1 / §3.1, §4.2, §4.2.3, §5.2: pre-delivery rechecks, signature verification, and delivery
+  // Pre-delivery rechecks, signature verification, and delivery
   async flushInternal(){
     if(!this.transport)return [];
     const results=[];
@@ -195,7 +195,7 @@ export class AgentCommons {
     return results;
   }
   receive(envelope){const next=this._receiveTail.then(()=>this.receiveInternal(envelope));this._receiveTail=next.catch(()=>{});return next}
-  // L3 Slice 2 v6 §2.1 / §4.2, §4.2.3, §5.2: inbound channel and tenant admission
+  // Inbound channel and tenant admission
   async receiveInternal(envelope){
     const valid=open(envelope);if(!valid.ok)throw new Error(`Invalid Pillar envelope: ${valid.reason}`);
     if(envelope.delegation!==undefined)throw new Error("Delegated host admission requires a configured principal-status adapter; not yet enabled");
@@ -292,7 +292,7 @@ export class AgentCommons {
     }
     return results;
   }
-  // L3 Slice 2 v6 §2.1 / §3.1, §8 (R2): foreign item skip with cursor advance and recipient isolation
+  // Foreign item skip with cursor advance and recipient isolation
   async poll(){
     if(!this.transport)throw new Error("No carrier configured");
     const cursors=this.store.get("cursors",{}),health=this.store.get("carrierHealth",{}),results=[];

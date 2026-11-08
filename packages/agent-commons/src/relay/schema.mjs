@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: relay.db schema.
+// Cloud Commons relay: relay.db schema.
 //
 // CORE_DDL is the section 9.3 block of the spec, copied byte for byte (the bytes after the
 // newline that ends the sql fence line, through the newline before the closing fence; see
@@ -15,7 +15,7 @@ import { mkdirSync } from "node:fs";
 export const SCHEMA_VERSION = 9;
 // CORE_DDL is the section 9.3 block of spec v3.4.6 (pinned at commit f49c073, which rewords only the 11.3
 // sweep sentence over b44ce70; the 9.3 block is unchanged). Its statements are those of the
-// scope seat's D-2 file for v3.4.2 (D-1's block: v3.3.2 + the D items + RC-2 + the D1-3 CHECKs, plus the
+// pinned DDL file for v3.4.2 (ddl_ruling_sha256 below: v3.3.2 + the D items + RC-2 + the D1-3 CHECKs, plus the
 // trigger roles_frozen_when_revoked, S5: no role row for a revoked member); v3.4.6 rewords two of its
 // comment lines for publication and changes no statement.
 export const SPEC_PIN = Object.freeze({

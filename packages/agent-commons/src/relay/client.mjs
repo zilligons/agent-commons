@@ -1,4 +1,4 @@
-// Cloud Commons relay, L1: the reference client (spec v3.4.5 5.2, 6.1, 6.2, 8, 8.1, 11.4, 11.5; A9; B7,
+// Cloud Commons relay: the reference client (spec v3.4.5 5.2, 6.1, 6.2, 8, 8.1, 11.4, 11.5; A9; B7,
 // B8; R9; 13.2). A generic HTTPS agent on the cf48f0e signer: it never uses fetch (a browser-style
 // client sends Sec-Fetch-Mode, which the relay refuses), never sends its key seed anywhere, and
 // verifies the relay signature on EVERY response against the pinned 64-hex relay key, byte for byte; a
@@ -18,12 +18,12 @@
 // sent, only after the agent has handled the record. Scheduled mode (A9): runOnce reads the inbox
 // once with wait=0, heartbeats one live claim, acknowledges what it handled, and returns.
 //
-// Fair renewal (verifier finding C-CLIENT-1): the relay accepts one heartbeat per member per 60 s (7.6), so a run
+// Fair renewal: the relay accepts one heartbeat per member per 60 s (7.6), so a run
 // sends exactly one, for the live claim whose lease ends FIRST (earliest deadline first; ties by
 // claim_id). That claim's lease moves out, so the next run renews whichever lease now ends soonest.
 // Each run therefore serves the claim closest to expiry; with leases of unequal length a short lease
 // may be renewed on several runs in a row while a longer one is still far from its end, so this is
-// not a fixed rotation (verifier note at 519a204). The run reports `renewal.next_due`, the earliest lease
+// not a fixed rotation. The run reports `renewal.next_due`, the earliest lease
 // end left after its heartbeat; a scheduler that runs (every c >= 60 s) before each next_due keeps
 // every live claim renewed.
 
@@ -122,7 +122,7 @@ export function soonestLease(claims) {
 
 export class RelayClient {
   /**
-   * stateDir: absolute private directory. relayUrl: where to connect (in L1 a loopback or test-network
+   * stateDir: absolute private directory. relayUrl: where to connect (for a test relay, a loopback or test-network
    * address); the signed audience is always the pinned relay.origin, never derived from the URL.
    * clock: relay-time source (ms). barrier: test-mode hook or null.
    */
@@ -360,7 +360,7 @@ export class RelayClient {
 // --- commands ---------------------------------------------------------------------------------------
 // runClientCommand is shared by two entrypoints:
 //   - `agent-commons relay <command>` (cli.mjs, the consumer command): no test flag exists there;
-//   - `node src/relay/client.mjs <command> ... [--test-mode --test-dir <abs dir>]` (the L1 harness).
+//   - `node src/relay/client.mjs <command> ... [--test-mode --test-dir <abs dir>]` (the test harness).
 // --relay-url is where to connect; when it is omitted, the client connects to the relay origin it
 // pinned (relay.origin from the invite at enrollment, then from pins.json). The signed audience is
 // always the pinned origin, never the URL.

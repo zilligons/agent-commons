@@ -1,4 +1,4 @@
-// Cloud Commons relay, L0: store-and-forward mailbox core (spec v3.2 sections
+// Cloud Commons relay: store-and-forward mailbox core (spec v3.2 sections
 // 11.5 and 7.6). Each record for a member gets a per-member seq that is never
 // reused. A read without a cursor resumes after the member's last ack, so a
 // client that lost its state gets exactly what it had not acknowledged.

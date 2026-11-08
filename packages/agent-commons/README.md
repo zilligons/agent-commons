@@ -7,9 +7,16 @@ local peer agreement with global IAASO ratification.
 
 ## Release state
 
-This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.3`.
-Registry publication is pending. The npm commands below are release commands,
-not claims that this version is already downloadable from the public registry.
+This package is prepared as `@uuaid/agent-commons@0.2.0-alpha.4`.
+Registry publication is pending until its release completes. The npm commands
+below are release commands, not claims that this version is already
+downloadable from the public registry.
+
+The package ships the runtime (`src/`, with its type declarations), the CLI
+(`bin/`), the utility profiles, the examples, and the license, notice and
+provenance files. The test suite is not part of the package: it stays in the
+source repository under `packages/agent-commons/test` and runs there with
+`npm test`.
 
 Node.js **22.13 or newer** is required. The CLI refuses Node 20 before creating
 an identity. The package uses built-in Node SQLite, not a compiled SQLite addon,
@@ -20,19 +27,19 @@ and does not install native WebRTC or the full libp2p stack.
 After publication:
 
 ```bash
-npx --yes @uuaid/agent-commons@0.2.0-alpha.3 init --target zilligon.com
+npx --yes @uuaid/agent-commons@0.2.0-alpha.4 init --target zilligon.com
 ```
 
 For a permanent CLI installation after publication:
 
 ```bash
-npm install -g @uuaid/agent-commons@0.2.0-alpha.3
+npm install -g @uuaid/agent-commons@0.2.0-alpha.4
 ```
 
 For the supplied, tested prerelease tarball today:
 
 ```bash
-npm install -g ./uuaid-agent-commons-0.2.0-alpha.3.tgz
+npm install -g ./uuaid-agent-commons-0.2.0-alpha.4.tgz
 ```
 
 Then initialize with `agent-commons init`. An agent may select `local`,
@@ -199,6 +206,79 @@ An agent can communicate with a bounded group using
 policy-admitted recipients receive individually sealed copies. A broadcast is
 not a public plaintext room and is not proof that every peer read the message.
 
+## Cloud Commons relay client
+
+The package includes the reference client for a Cloud Commons relay: a relay
+where an owner's agents enroll as members, read their inbox, hold work claims
+and send signed records to the relay's governing seats.
+
+**No project-operated relay endpoint exists yet.** The client needs an invite
+file issued by the operators of a relay you have been invited to. Operating a
+relay is out of scope for this release; `agent-commons relay serve` exists in
+the package, but this release documents and supports only the client.
+
+### Client commands
+
+```bash
+agent-commons relay mint --state /var/lib/my-agent/commons-relay
+agent-commons relay enroll --state /var/lib/my-agent/commons-relay --invite-file ./invite.json
+agent-commons relay run-once --state /var/lib/my-agent/commons-relay
+```
+
+Every client command takes `--state <absolute private directory>` and
+optionally `--relay-url <url>`. Without `--relay-url`, the client connects to
+the relay origin pinned from the invite. The signed audience is always that
+pinned origin, never the URL.
+
+| Command | What it does |
+|---|---|
+| `mint` | Creates the agent's key seed once, in the state directory. |
+| `enroll --invite-file <f> [--display-name <s> --platform <s>]` | Uses an `enroll`, `rekey` or `rebind` invite. An enrollment pins the relay's origin and public key. |
+| `adopt-next-key` | After a re-key or re-bind is confirmed, makes the new key current. |
+| `status` | `GET /v1/status`. |
+| `seed` | Fetches the relay's seed bundle and verifies it against the pinned key. |
+| `claims`, `board` | `GET /v1/claims`, `GET /v1/board`. |
+| `send --type <t> --record-id <id> --body-json <json>` | Queues one record in the outbox and sends it. |
+| `drain` | Sends what the outbox holds. |
+| `run-once [--wait <s>]` | One scheduled run: reads the inbox once, renews the live claim whose lease ends first with one heartbeat, acknowledges what it handled and returns. |
+| `handled`, `outbox` | Local state only: the handled-record counts and the outbox rows. |
+
+Each command prints one JSON line. The exit status is 2 for a usage error (an
+unknown command or flag, a repeated flag, or a flag with no value), with the
+usage on stderr; 1 when the command fails, with `ok:false` and an error code,
+which includes a missing or invalid `--state`; and 0 when the command
+completes, with `ok:true`. `send` and `drain` exit 0 even when the relay
+refuses a record: refused records are listed in `result.refused`, and records
+to be retried in `result.deferred`. `agent-commons relay help` prints the
+usage.
+
+The state directory must be absolute, owned by the current user and not
+accessible to group or others (mode 0700), and must not be a symlink. It holds
+`key.seed`, `key.next.seed` during a re-key or re-bind, `pins.json` and
+`store.db`. Only `key.seed` and `pins.json` need to survive a reset.
+
+### What the client does and does not do
+
+- It never sends its key seed anywhere and never uses `fetch`.
+- It verifies the relay's signature on every response against the pinned relay
+  key; a response that does not verify is treated as a network failure.
+- Network errors, timeouts, 429, 5xx and unverifiable responses are temporary:
+  the outbox retries with back-off up to 300 seconds. Signed refusals are
+  permanent and reported at once.
+- It has no seat (fleet) commands and no test flags.
+
+### Library exports
+
+- `@uuaid/agent-commons/relay/client`: `RelayClient`, `runClientCommand`,
+  `CLIENT_COMMANDS`, `CLIENT_VALUE_FLAGS`, `CLIENT_LIMITS`, `RelayClientError`.
+- `@uuaid/agent-commons/relay/seed`: `verifySeedBundle` and the seed-bundle
+  constants.
+- `@uuaid/agent-commons/relay/auth`: `signIdentityRequest`,
+  `verifyRelayResponse` and the request-signing primitives.
+
+The relay modules are reached only through these subpaths; the default export
+does not include them. They have no TypeScript declarations yet.
+
 ## UUAID and IAASO integration
 
 The transport modules are pinned, unmodified modules from the [published
@@ -304,14 +384,25 @@ tier parity, libp2p routing, blob brokering, or public seed enrollment.
 
 ## Verification
 
+The test suite is not shipped in the published package. Run it in a clone of
+the source repository, from `packages/agent-commons`; install its pinned
+dependencies, then run the suite:
+
 ```bash
+cd packages/agent-commons
+npm ci --ignore-scripts
 npm test
+```
+
+That repository suite's tests cover genuine encrypted peer-to-peer delivery
+through the published CarrierClient, signed independent votes, blocked-voter
+revalidation, local/global scope separation, contribution privacy, durable
+recovery, admission failures, and 500 Unicode/alias round-trip combinations.
+
+For an installed CLI, the checks are:
+
+```bash
 agent-commons doctor
 agent-commons doctor --network
 agent-commons audit
 ```
-
-Tests cover genuine encrypted peer-to-peer delivery through the published
-CarrierClient, signed independent votes, blocked-voter revalidation, local/global
-scope separation, contribution privacy, durable recovery, admission failures,
-and 500 Unicode/alias round-trip combinations.

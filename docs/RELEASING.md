@@ -3,7 +3,9 @@
 Public repository: [zilligons/agent-commons](https://github.com/zilligons/agent-commons).
 Package: `@uuaid/agent-commons`, directory `packages/agent-commons`.
 
-This document is the release procedure, not a claim that an npm version has been published. The coordinator created the authorized [public repository](https://github.com/zilligons/agent-commons), configured its `npm-alpha` environment with an owner-review gate, and installed an alpha-tag update/deletion ruleset with an explicit administrator bypass. Exact source-publication and CI results are recorded in `QA-COHORT.md`; the npm publishing identity remains unconfigured.
+This document is the release procedure. The coordinator created the authorized [public repository](https://github.com/zilligons/agent-commons), configured its `npm-alpha` environment with an owner-review gate, and installed an alpha-tag update/deletion ruleset with an explicit administrator bypass. Exact source-publication and CI results are recorded in `QA-COHORT.md`.
+
+npm trusted publishing works for this workflow. `0.2.0-alpha.2` (2026-10-08) and `0.2.0-alpha.4` (2026-11-08) were published by `release.yml` on `main`, through the `npm-alpha` environment, with npm provenance. `npm view @uuaid/agent-commons dist-tags` shows the current versions.
 
 `PROVENANCE.json` in the package is a vendored Pillar checksum manifest. It is not the npm registry provenance attestation.
 
@@ -61,13 +63,13 @@ CI and the release verify job, which have no `id-token` permission:
 5. Run packed `cohort-init --target zilligon.com` and `cohort-status`. Require the seven roster ids, `registration: not-performed`, and `certified: false`. Delete that home in the same step. It contains seven `local-secret` files and must not be printed or uploaded.
 6. Also run `init --target zilligon.com` and `doctor`, then delete that home.
 
-`doctor` currently hardcodes `packageRelease` as `0.2.0-alpha.3` in `bin/agent-commons.mjs`. The release verify job fails if that string does not equal the dispatched version. Do not hide that by skipping the check. A later alpha needs a separate source change; this procedure does not edit that file.
+`doctor` reports `packageRelease` from a string hardcoded in `bin/agent-commons.mjs`. CI and the release verify job fail if it does not equal the version in `package.json`, so every release changes it together with `package.json` and `package-lock.json`, in the source change that prepares the release. Do not hide a mismatch by skipping the check. The workflows do not edit that file.
 
 ## Publish job
 
 The publish job is the only job with `id-token: write`, and it runs only when the dispatch input `npm_trusted_publisher` is true. That box is an operator attestation that `npm trust github` already exists for `release.yml`, `zilligons/agent-commons`, and environment `npm-alpha`. It is not proof. Leave it unchecked until that npm configuration exists. An unchecked dispatch fails in `refuse-untrusted-publish` and does not request an OIDC token or wait on `npm-alpha`.
 
-Do not dispatch a publish while the trusted publisher is missing. This tree has not been dispatched.
+Do not dispatch a publish if the trusted publisher has been removed.
 
 When the input is true, the publish job waits on the GitHub environment `npm-alpha` before any of its steps. That approval is a GitHub deployment gate. It does not configure npm, and it does not by itself authenticate to the registry.
 
@@ -107,15 +109,17 @@ GitHub environment approval and `id-token: write` are not enough. npm must have 
 | Environment | `npm-alpha` |
 | Allowed action | `npm publish` |
 
-All of those fields are case-sensitive. `npm trust` can be attached only to a package that already exists, and it requires account 2FA plus write access ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust/)). `@uuaid/agent-commons` does not exist yet, so trusted publishing cannot be configured, and the first OIDC publish will fail. Do not "fix" that by printing or storing a token.
+All of those fields are case-sensitive. `npm trust` can be attached only to a package that already exists, and it requires account 2FA plus write access ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust/)). `@uuaid/agent-commons` exists and this trust is configured (see the top of this document). If an OIDC publish fails, do not "fix" it by printing or storing a token.
 
 ### Namespace
 
-The `@uuaid` scope already has other packages. This package name is still absent. Scope existence does not create `@uuaid/agent-commons`, and it does not grant this workflow publish rights.
+The `@uuaid` scope already has other packages. Scope existence does not grant this workflow publish rights; only the package's trusted publisher does.
 
 ### Bootstrap without burning the release version
 
-npm versions are immutable. Do not manually publish `0.2.0-alpha.3`, or any version you want attested, as the stub. A manual first publish of that version can never be replaced by a provenance release.
+Done on 2026-10-08: the `0.0.0` stub is on the `bootstrap` dist-tag. This section is kept as a record of how it was done.
+
+npm versions are immutable. Do not manually publish any version you want attested as the stub. A manual first publish of that version can never be replaced by a provenance release.
 
 An authorized npm namespace administrator, through an authenticated publishing environment outside this workflow:
 
@@ -145,6 +149,16 @@ Do this only after trust works. Setting `mfa=publish` before the trusted publish
 7. Let CI pass on that commit. Then `workflow_dispatch` from `main` with that exact version. Approve `npm-alpha` only after the verify log shows no credential material.
 8. Confirm the registry version from a public read. Do not run `npm whoami`, `npm token`, `npm config list`, `env`, or `printenv` to confirm it.
 
+## The `latest` dist-tag
+
+`release.yml` publishes only to the `alpha` dist-tag. Moving `latest` is a separate step that a package owner runs by hand after the published version has been checked:
+
+```bash
+npm dist-tag add @uuaid/agent-commons@X.Y.Z-alpha.N latest
+```
+
+It needs the owner's npm two-factor approval, and it is reversible by pointing `latest` back at the previous version. Leave `latest` alone if the owner has not asked for the move.
+
 ## No secret echo
 
 - Workflows never print environment dumps or npm config.
@@ -157,4 +171,4 @@ The coordinator attempted a read-only local `npm whoami` using the user's existi
 
 ## Remaining authorization boundary
 
-The workflow files do not create npm trust, provision a bootstrap version, or read a local npm credential. Source publication is separately authorized and coordinated. No bootstrap stub or npm version was published, and the provenance workflow will not be dispatched until a valid publishing identity exists.
+The workflow files do not create npm trust, provision a bootstrap version, or read a local npm credential. Source publication is separately authorized and coordinated. The bootstrap stub and the trusted publisher were set up outside these workflows. Each release dispatch and each `npm-alpha` approval is authorized separately.

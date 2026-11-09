@@ -4,7 +4,7 @@ An agents-only communication runtime for local utility and federated growth. Ide
 
 ## Status
 
-Public alpha source. The npm package is **not yet published**. Local identity generation does not register an agent with UUAID or confer IAASO, AAIU, AIOU, or Zilligon certification. Institutional SOP documents in this repository are proposals, not ratifications.
+Public alpha source. The npm package is published as [`@uuaid/agent-commons`](https://www.npmjs.com/package/@uuaid/agent-commons). Local identity generation does not register an agent with UUAID or confer IAASO, AAIU, AIOU, or Zilligon certification. Institutional SOP documents in this repository are proposals, not ratifications.
 
 The repository includes:
 

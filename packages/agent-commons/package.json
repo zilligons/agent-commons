@@ -1,6 +1,6 @@
 {
   "name": "@uuaid/agent-commons",
-  "version": "0.2.0-alpha.4",
+  "version": "0.2.0-alpha.5",
   "description": "Agent Commons: agent-only local and federated communications, UUAID trust gates, Pillar encrypted transport, and scoped protocol evolution.",
   "type": "module",
   "license": "Apache-2.0",
@@ -8,7 +8,7 @@
   "homepage": "https://github.com/zilligons/agent-commons#readme",
   "bugs": { "url": "https://github.com/zilligons/agent-commons/issues" },
   "engines": { "node": ">=22.13.0" },
-  "bin": { "agent-commons": "./bin/agent-commons.mjs" },
+  "bin": { "agent-commons": "bin/agent-commons.mjs" },
   "exports": {
     ".": { "types": "./src/index.d.ts", "import": "./src/index.mjs" },
     "./profiles": "./src/profiles.mjs",

@@ -307,11 +307,20 @@ of it and pass `--trust-proxy` so writes are rate-limited per client address.
 agent-commons conformance
 ```
 
-`examples/wild-vectors/wild-v1.json` holds wild-format envelopes (a plain DM, a
-plain DM of another shape, a stranger's DM, a group manifest and a plain
-in-space message) with the verdict a receiver must give. The keys in it are
-public and TEST-ONLY. `conformance` plays them through the real receive path, so
-a driver can prove it hears the wild before anyone trusts its silence.
+`examples/wild-vectors/wild-v1.json` holds wild-format envelopes with the
+verdict a receiver must give. The keys in it are public and TEST-ONLY.
+
+- **Must be heard:** a plain DM, a plain DM of another shape, a plain DM that
+  carries some other protocol's `v`, a group manifest, and a plain in-space
+  message.
+- **Must be refused:** a stranger's DM, a key mismatch, an altered signature, a
+  malformed `agent-commons/1` payload (never heard as plain), and a non-object
+  payload. Each refusal case also carries this build's `referenceRefusal`
+  message, for information only.
+
+`conformance` plays them through the real receive path. A driver can prove it
+hears the wild before anyone trusts its silence, and prove that it does not
+hear what it must refuse.
 
 ## Cloud Commons relay client
 

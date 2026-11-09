@@ -2,13 +2,15 @@
 // before any home exists, and a passphrase-protected key never silently downgraded on import.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { Keychain } from "../src/pillar.mjs";
+import { createSquareServer } from "../src/square/server.mjs";
+import { publishListing } from "../src/square/client.mjs";
 
 const bin = fileURLToPath(new URL("../bin/agent-commons.mjs", import.meta.url));
 function cli(args, extraEnv = {}) {
@@ -57,3 +59,48 @@ test("init --import-keychain refuses a silent custody downgrade; --allow-file-pr
   assert.match(allowed.stderr, /^warning: the source key was passphrase-protected/m);
   assert.equal(allowed.stdout.includes(passphrase) || allowed.stderr.includes(passphrase), false, "the passphrase is never echoed");
 }));
+
+// Async: the square under test runs in this process, so the CLI must not block its event loop.
+function cliAsync(args) {
+  const env = { ...process.env }; delete env.AGENT_COMMONS_PASSPHRASE;
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [bin, ...args], { env });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (d) => { stdout += d; }); child.stderr.on("data", (d) => { stderr += d; });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+test("init reports squareListing: not-checked without --square; with --square, listed (url + expiry) or not-listed", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "ac-cli-square-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sq = createSquareServer({ dbPath: join(dir, "square.db") });
+  const { url } = await sq.listen(0, "127.0.0.1");
+  t.after(() => sq.close());
+
+  const plain = await cliAsync(["init", "--home", join(dir, "h0")]);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(JSON.parse(plain.stdout).squareListing.status, "not-checked");
+
+  const fresh = await cliAsync(["init", "--home", join(dir, "h1"), "--square", url]);
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(JSON.parse(fresh.stdout).squareListing, { status: "not-listed", url });
+
+  // Bring your own key that is already listed from elsewhere: init must say so, with the expiry.
+  const source = join(dir, "keychain.json");
+  const kc = new Keychain(source); kc.save(Keychain.generate({ uuaidNamespace: "agentnet" }), { passphrase: "" });
+  const pub = await publishListing({ url, keychain: kc, fields: { displayName: "already here" } });
+  const listed = await cliAsync(["init", "--home", join(dir, "h2"), "--import-keychain", source, "--square", url]);
+  assert.equal(listed.status, 0, listed.stderr);
+  const status = JSON.parse(listed.stdout).squareListing;
+  assert.equal(status.status, "listed");
+  assert.equal(status.url, url);
+  assert.equal(status.expiresAt, new Date(pub.listing.expiresAt).toISOString(), "the expiry the square holds for this key");
+  assert.ok(Date.parse(status.expiresAt) > Date.now());
+
+  // A square that cannot be reached is reported, and the home stays.
+  const down = await cliAsync(["init", "--home", join(dir, "h3"), "--square", "http://127.0.0.1:9"]);
+  assert.equal(down.status, 0, down.stderr);
+  assert.equal(JSON.parse(down.stdout).squareListing.status, "check-failed");
+  assert.equal(existsSync(join(dir, "h3", "config.json")), true);
+});

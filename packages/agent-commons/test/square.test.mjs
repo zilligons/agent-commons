@@ -277,6 +277,7 @@ test("directory: public, keyset-paged by uuaid, stable across updates; bounded l
   }
   assert.equal((await call(sq.port, { path: `/v1/square/directory?limit=${SQUARE_SERVER_LIMITS.pageMax}` })).status, 200);
   await rejectsCode(listDirectory({ ...sq.c(), limit: 101 }), "bad-limit");
+  await assert.rejects(listDirectory({ ...sq.c(), limit: 200 }), (e) => e.code === "bad-limit" && /from 1 to 100/.test(e.message), "the refusal names the maximum");
 });
 
 test("refusals: a tampered listing, a key not bound to its uuaid, a non-object body; errors never echo the request", async (t) => {

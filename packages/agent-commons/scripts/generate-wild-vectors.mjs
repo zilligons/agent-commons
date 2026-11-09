@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Keychain, seal } from "../src/pillar.mjs";
 import { RosterStore, adminCreate, adminChange, buildGroupTag } from "../src/spaces/pillar-group.mjs";
+import { BASE_PROTOCOL } from "../src/profiles.mjs";
 
 const PKCS8 = Buffer.from("302e020100300506032b657004220420", "hex");
 function testKey(label, ns) {
@@ -34,6 +35,14 @@ const tag2 = { ...buildGroupTag(rec2, { op: "manifest", manifest: m2, msgId: "gm
 const tag3 = { ...buildGroupTag(rec2, { op: "message", msgId: "gm-" + "3".repeat(32) }) };
 rmSync(dir, { recursive: true, force: true });
 
+// Rejection vectors (holder addendum 6): each must be refused, and none may be heard as plain. `expect` requires only the
+// refusal; `referenceRefusal` is this build's message, informational for other implementations (pinned in our own test).
+// Key mismatch: the stranger's key signs, then the envelope is relabelled as the admitted wild sender.
+const mismatch = to(stranger, { text: "I am the wild sender" }, "env-wildvector-mismatch-0001"); mismatch.sender = wild.k._identity.uuaid;
+// Invalid signature: a correctly sealed envelope with one hex digit of its transport signature flipped.
+const tampered = to(wild, { text: "tampered in transit" }, "env-wildvector-badsig-0001");
+tampered.transportSignature.signature = (tampered.transportSignature.signature[0] === "0" ? "1" : "0") + tampered.transportSignature.signature.slice(1);
+
 const vectors = {
   v: "agent-commons/wild-vectors/1",
   warning: "TEST-ONLY KEYS. The seeds below are public. Never use these identities for anything real.",
@@ -50,6 +59,16 @@ const vectors = {
       expect: [{ runtime: "accepted", group: rec1.id, groupVerdict: "invitation" }] },
     { name: "plain-in-space-message", about: "Invitation, accept (v2), then a plain message inside the space.", envelopes: [to(wild, { _group: tag1 }, "env-wildvector-space-0001"), to(wild, { _group: tag2 }, "env-wildvector-space-0002"), to(wild, { text: "welcome to the room", _group: tag3 }, "env-wildvector-space-0003")],
       expect: [{ runtime: "accepted", groupVerdict: "invitation" }, { runtime: "accepted", groupVerdict: "accepted" }, { runtime: "accepted", groupVerdict: "accepted", text: "welcome to the room" }] },
+    { name: "plain-dm-foreign-version", about: "False-silence check: a plain payload carrying some other protocol's `v` is still plain and must be heard. A build that treats any `v` as strict drops it.", envelopes: [to(wild, { v: "pillar-chat/1", text: "not the commons format" }, "env-wildvector-foreignv-0001")],
+      expect: [{ runtime: "accepted", format: "pillar-plain", text: "not the commons format" }] },
+    { name: "reject-key-mismatch", about: "An admitted sender's uuaid on an envelope signed by another key: refused.", envelopes: [mismatch],
+      expect: [{ runtime: "refused" }], referenceRefusal: "Invalid Pillar envelope: keyId-sender-mismatch" },
+    { name: "reject-bad-signature", about: "A sealed envelope with its transport signature altered: refused.", envelopes: [tampered],
+      expect: [{ runtime: "refused" }], referenceRefusal: "Invalid Pillar envelope: bad-signature" },
+    { name: "reject-malformed-commons", about: "A payload claiming agent-commons/1 that fails the strict checks: refused, and NOT heard as plain.", envelopes: [to(wild, { v: BASE_PROTOCOL, id: "not-a-uuid", body: 1 }, "env-wildvector-malformed-0001")],
+      expect: [{ runtime: "refused" }], referenceRefusal: "Invalid or expired Agent Commons payload" },
+    { name: "reject-non-object", about: "A plain payload that is not a JSON object: refused.", envelopes: [to(wild, "just a string", "env-wildvector-nonobject-0001")],
+      expect: [{ runtime: "refused" }], referenceRefusal: "Plain Pillar payload must be a JSON object" },
   ],
 };
 const out = new URL("../examples/wild-vectors/wild-v1.json", import.meta.url);

@@ -141,7 +141,11 @@ export async function resolveAgent({ url, uuaid, ...rest }) {
  */
 export async function listDirectory({ url, limit, cursor, ...rest }) {
   const o = options(rest);
-  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > SQUARE_CLIENT_LIMITS.pageMax)) throw new SquareClientError("bad-limit");
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > SQUARE_CLIENT_LIMITS.pageMax)) {
+    const error = new SquareClientError("bad-limit");
+    error.message = `square: bad-limit (limit is an integer from 1 to ${SQUARE_CLIENT_LIMITS.pageMax}; page with --cursor)`;
+    throw error;
+  }
   if (cursor !== undefined && cursor !== null && (typeof cursor !== "string" || !SELF_CERTIFYING_AGENT_UUAID.test(cursor))) throw new SquareClientError("bad-cursor");
   const base = squareBase(url, o);
   const params = new URLSearchParams();

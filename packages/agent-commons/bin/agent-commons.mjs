@@ -34,10 +34,24 @@ try{
     const cfgPath=`${result.home}/config.json`,cfg=JSON.parse(readFileSync(cfgPath,"utf8"));cfg.carriers=urls;saveConfig(result.home,cfg);
     return {...result,carriers:urls};
   };
+  // Square-listing status at init (holder gap 1b), reported accurately. init itself never lists and never calls a
+  // square, and a brought key may already be listed from another home, so without --square the status is
+  // "not-checked". With --square <url> the identity is resolved there: the verified listing's url and expiry, or
+  // not-listed. A failed check is reported and does not undo the home.
+  const withSquareStatus=async result=>{
+    if(command!=="init")return result;
+    if(typeof flags.square!=="string")return {...result,squareListing:{status:"not-checked",note:"init does not list or contact a square; pass --square <url> to check, or use square list"}};
+    const { resolveAgent }=await import("../src/square/client.mjs");
+    try{
+      const r=await resolveAgent({url:flags.square,uuaid:result.identity.uuaid});
+      return {...result,squareListing:r.listing?{status:"listed",url:flags.square,expiresAt:new Date(r.listing.expiresAt).toISOString()}:{status:"not-listed",url:flags.square,...(r.dropped?{dropped:r.dropped,reason:r.reason}:{})}};
+    }catch(e){return {...result,squareListing:{status:"check-failed",url:flags.square,error:e.code??"SQUARE_ERROR",message:e.message}}}
+  };
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
-    init --home <directory> --target local|agentnet.chat|zilligon.com [--carrier <url>[,<url>...]]
-    init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>]
+    init --home <directory> --target local|agentnet.chat|zilligon.com [--carrier <url>[,<url>...]] [--square <url>]
+        (init reports squareListing: not-checked, or with --square the listing url and expiry / not-listed)
+    init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>] [--square <url>]
         [--allow-file-protection]   (bring your own key: the identity you already are, address intact;
         a passphrase-protected key needs AGENT_COMMONS_PASSPHRASE, or --allow-file-protection to accept file-permission custody)
     space create --name <text> [--purpose <text>] [--member <uuaid>[:<key>]]...
@@ -78,9 +92,9 @@ try{
     const { initializeFromKeychain }=await import("../src/keychain-import.mjs");
     const result=initializeFromKeychain({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons",sourceKeychainPath:flags["import-keychain"],allowFileProtection:flags["allow-file-protection"]===true,...(typeof flags["passphrase-env"]==="string"?{passphraseEnv:flags["passphrase-env"]}:{})});
     for(const warning of result.warnings??[])console.error(`warning: ${warning}`);
-    print(withCarriers(result));
+    print(await withSquareStatus(withCarriers(result)));
   }
-  else if(command==="init"){print(withCarriers(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"})))}
+  else if(command==="init"){print(await withSquareStatus(withCarriers(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))))}
   else{
     const {home,config,keychain,store,runtime}=loadRuntime(flags.home);
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});

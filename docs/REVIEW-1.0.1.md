@@ -125,9 +125,37 @@ Disclosed limits:
   `createGroupReceiver` in `cd64da0`.
 - One wild sender's real message sequence was not reproduced: UNVERIFIED.
 
-## PENDING: RedTeam disposition of `cd64da0` and the 1.0.1 workflow change
+## RedTeam review 4: `cd64da0` (COND-A and COND-B)
 
-PENDING. Filled in when RedTeam replies.
+Verdict: **PASS** (2026-11-09 06:30 UTC). Verified against the branch, with executed red/green runs.
+
+- COND-A landed as a code check (`chainAuthorized`), not a loader-scope pointer. RedTeam agreed with the reason: a chain
+  can enter the store through member recovery, so where it was loaded from does not bound it.
+- COND-B landed: the block check runs first on every send, under any spelling of the key, and a blocked recipient is
+  reported per recipient.
+- When `driver.mjs` is reverted to `970deac`, the COND-A, COND-B and receiver tests fail. RedTeam confirmed this with its
+  own run.
+- On 0.2.0-alpha.6 having shipped before these conditions: RedTeam recorded that the gate was missed, and found no
+  known exploitable defect in alpha.6 from it. COND-A tightens a check that key derivation already enforces, and COND-B
+  had no block command in the shipped CLI to reach it.
+- A note on test counts: `npm test` runs `node --test test/*.test.mjs`. A bare `node --test` also picks up the
+  expected-red control file, which is excluded on purpose. Counts in this record are `npm test` counts.
+
+## RedTeam review 5: the 1.0.1 release, before publish (`970deac..eb019d9`)
+
+Verdict: **ACCEPT** (2026-11-09 06:55 UTC), item by item:
+
+| Item | Verdict |
+| --- | --- |
+| `cd64da0`: COND-A, COND-B, `createGroupReceiver` | ACCEPT |
+| `82e9368`: stable `X.Y.Z` releases publish to `latest` | ACCEPT. The regex refuses a `v` prefix, ranges, `latest` and every non-alpha prerelease. The dist-tag is derived the same way in all three places, and `publishConfig.tag` must match it in CI, in verify and in publish. Publishing straight to `latest` is authorized by the owner's order for 1.0.1. |
+| `3e3c8e3`: positional-argument refusal and declarations | ACCEPT. The refusal goes through the JSON error path, and the echoed argument is limited to 80 characters. |
+| Extending the tag ruleset to `refs/tags/v*` | No objection, with one binding condition: it must be applied **before** the `v1.0.1` tag is pushed, with the same bypass and protections as before. |
+| `cd6b146`: `SECURITY-MODEL.md` and the README security section | ACCEPT. Accurate. |
+
+RedTeam also confirmed that the candidate tarball's sha256 is
+`59416ee8a13d9f91c01437056f4b93372ed822b2e40e33721bcf905d6bdf3500`. This was a review of these five items before
+publish, not a sign-off of the whole application.
 
 ## PENDING: V1 verification of the 1.0.1 candidate
 

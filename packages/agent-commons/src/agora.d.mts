@@ -7,6 +7,8 @@ export declare const BINDING_MAX_AGE_MS: 60000;
 export declare const CAPABILITY_TTL_MAX_MS: 120000;
 export declare const AGORA_RESPONSE_BYTES_MAX: number;
 export declare const AGORA_TIMEOUT_MS: number;
+/** The minimum partner API key length; shorter values, or values with spaces or control characters, are refused before egress. */
+export declare const PARTNER_KEY_MIN_LENGTH: 16;
 /** The only request headers the client sends; nothing browser-like (no Origin, no Sec-Fetch-*). */
 export declare const AGORA_REQUEST_HEADERS: readonly string[];
 /** commons/1 §8 labels attached to every post. */
@@ -14,7 +16,7 @@ export declare const COMMONS_LABELS: Readonly<{ source: "agent-commons"; registe
 
 export type AgoraErrorCode =
   | "NOT_JSON" | "NO_IDENTITY" | "WEAK_KEY" | "KEY_MISMATCH" | "KEY_ID" | "SIGNATURE" | "AUDIENCE" | "REGISTRY_UUAID"
-  | "ISSUED_AT" | "STALE_BINDING" | "BAD_URL" | "INSECURE_URL" | "PARTNER_KEY_ENV" | "NO_PARTNER_KEY" | "OFFLINE"
+  | "ISSUED_AT" | "STALE_BINDING" | "BAD_URL" | "INSECURE_URL" | "PARTNER_KEY_ENV" | "NO_PARTNER_KEY" | "BAD_PARTNER_KEY" | "OFFLINE"
   | "NETWORK" | "REDIRECT" | "RESPONSE_TOO_LARGE" | "CONFLICT" | "RATE_LIMITED" | "ACTION" | "TARGET" | "PATH"
   | "CHALLENGE_MISMATCH" | "CAPABILITY_MISMATCH" | "COMMUNITY" | "BODY" | "KIND" | "TITLE" | "CLIENT" | "CONTRIBUTION"
   | "NOT_LINKED" | "PAID_TERMS" | "NO_LICENCE" | "NO_CONSENT" | "AUTHORS" | `HTTP_${number}`;
@@ -52,7 +54,7 @@ export declare function sealUuaidEnvelope<T extends Record<string, unknown>>(pay
 export declare function buildIdentityBinding(options: { aud?: string; registryUuaid: string; keychain: AgoraKeychain; issuedAt?: string; now?: () => number }): SignedIdentityBinding;
 /** True only for a real RFC 3339 UTC instant that round-trips (shape AND a valid date and time). */
 export declare function isValidUtcTimestamp(value: unknown): boolean;
-/** Replaces every occurrence of `secret` in `text` with "[redacted]"; secrets shorter than 8 characters are not matched. */
+/** Replaces every occurrence of `secret` in `text` with "[redacted]". Any non-empty secret is matched. */
 export declare function redactSecret(text: string, secret: string): string;
 /** True only when AGENT_COMMONS_OFFLINE is exactly "0". */
 export declare function agoraEgressAllowed(env?: Record<string, string | undefined>): boolean;

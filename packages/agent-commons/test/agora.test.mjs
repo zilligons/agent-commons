@@ -10,7 +10,7 @@ import { Keychain } from "../src/pillar.mjs";
 import { jcs } from "../src/pillar.mjs";
 import {
   AgoraClient, AgoraPublisher, AgoraError, sealUuaidEnvelope, buildIdentityBinding, contentHash, assertPlainJson,
-  agoraEgressAllowed, COMMONS_LABELS, BINDING_MAX_AGE_MS, IDENTITY_BINDING_TYPE, AGORA_REQUEST_HEADERS,
+  agoraEgressAllowed, COMMONS_LABELS, BINDING_MAX_AGE_MS, IDENTITY_BINDING_TYPE, AGORA_REQUEST_HEADERS, PARTNER_KEY_MIN_LENGTH,
 } from "../src/agora.mjs";
 
 const key = (ns = "agentnet") => { const k = new Keychain("unused"); k._identity = Keychain.generate({ uuaidNamespace: ns }); return k; };
@@ -68,7 +68,7 @@ test("a key-derived identity seals a @uuaid/core envelope: payloadHash = 0x sha2
   const k = key();
   const env = sealUuaidEnvelope({ b: 1, a: "x", n: { z: true, y: null } }, k, "ac-k1", { now: () => new Date("2026-11-09T09:00:00.000Z") });
   const bytes = Buffer.from('{"a":"x","b":1,"n":{"y":null,"z":true}}', "utf8");
-  assert.equal(env.payloadHash, "0x" + createHash("sha256").update(bytes).digest("hex"));
+  assert.equal(env.payloadHash, "0x" + createHash("sha256").update(bytes).digest("hex"), "RT4-JCS-canonical-key-order");
   assert.deepEqual(Object.keys(env.signatures[0]), ["alg", "keyId", "publicKey", "signature", "created"]);
   assert.equal(env.signatures[0].alg, "ed25519"); assert.equal(env.signatures[0].created, "2026-11-09T09:00:00.000Z");
   assert.equal(ed25519Verify(k._identity.publicKeyHex, bytes, env.signatures[0].signature), true);
@@ -117,7 +117,7 @@ test("egress is allowed ONLY when AGENT_COMMONS_OFFLINE is exactly \"0\", whatev
   assert.equal(agoraEgressAllowed({ AGENT_COMMONS_OFFLINE: "0" }), true);
   const k = key(); const stub = await stubAgora(t, { keychain: k });
   for (const env of [{ UUAID_PARTNER_KEY: PARTNER }, { UUAID_PARTNER_KEY: PARTNER, AGENT_COMMONS_OFFLINE: "1" }]) {
-    await assert.rejects(client(k, stub.url, { env }).joinCommunity({ source: "agentnet", slug: "s", sourceId: "1" }), code("OFFLINE"));
+    await assert.rejects(client(k, stub.url, { env }).joinCommunity({ source: "agentnet", slug: "s", sourceId: "1" }), code("OFFLINE"), "RT2-offline-blocks-egress");
   }
   assert.equal(stub.seen.length, 0, "no request reached even a loopback Agora while offline");
 });
@@ -135,7 +135,7 @@ test("the client sends no browser headers: the live rejectBrowser gate (Origin, 
 test("the partner key is read only from the environment, fails closed, and never appears in an error", async (t) => {
   const k = key();
   for (const env of [{ AGENT_COMMONS_OFFLINE: "0" }, { AGENT_COMMONS_OFFLINE: "0", UUAID_PARTNER_KEY: "" }, { AGENT_COMMONS_OFFLINE: "0", UUAID_PARTNER_KEY: "   " }]) {
-    assert.throws(() => new AgoraClient({ url: "https://api.uuaid.org", keychain: k, keyId: "ac-k1", registryUuaid: REG, env }), code("NO_PARTNER_KEY"));
+    assert.throws(() => new AgoraClient({ url: "https://api.uuaid.org", keychain: k, keyId: "ac-k1", registryUuaid: REG, env }), code("NO_PARTNER_KEY"), "RT1-partner-key-env-only");
   }
   assert.equal(new AgoraClient({ url: "https://api.uuaid.org", keychain: k, keyId: "ac-k1", registryUuaid: REG, env: ON, partnerKey: PARTNER }).registryUuaid, REG, "an option named partnerKey is ignored, not used");
   // An Agora that refuses: the error carries the server's message, never the key.
@@ -149,14 +149,26 @@ test("the partner key is read only from the environment, fails closed, and never
 test("the full write flow against a loopback Agora: challenge, single-use capability, signed write; capability claims match", async (t) => {
   const k = key(); const stub = await stubAgora(t, { keychain: k });
   const c = client(k, stub.url);
-  const join = await c.joinCommunity({ source: "agentnet", slug: "builders", sourceId: "42" });
+  // The server's single-use rule would turn a reused nonce into a thrown CONFLICT, which is not assertion evidence.
+  // So the client-side guarantee is asserted directly, and each write is caught and checked rather than allowed to throw.
+  const outcome = async (p) => { try { return { ok: true, value: await p }; } catch (e) { return { ok: false, code: e.code }; } };
+  const joinR = await outcome(c.joinCommunity({ source: "agentnet", slug: "builders", sourceId: "42" }));
+  const postR = await outcome(c.post("agentnet", "42", { kind: "post", title: "hello", body: "from a commons agent" }));
+  {
+    const nonces = stub.seen.filter((x) => x.url === "/agora/capabilities/challenge").map((x) => JSON.parse(x.body).nonce);
+    assert.equal(new Set(nonces).size, nonces.length, "RT6-fresh-nonce-per-write");
+  }
+  assert.equal(joinR.ok, true, "RT6-first-write-succeeds"); assert.equal(postR.ok, true, "RT6-second-write-succeeds");
+  const join = joinR.value; const r = postR.value;
   assert.deepEqual(join.result, { ok: true });
-  const r = await c.post("agentnet", "42", { kind: "post", title: "hello", body: "from a commons agent" });
   assert.equal(r.result.moderation_status, "PENDING"); assert.equal(r.result.body_hash, r.payloadHash);
   const write = JSON.parse(stub.seen.at(-1).body);
   assert.equal(write.payload.target, "community:agentnet:42"); assert.equal(write.payload.author_uuaid, REG); assert.equal(write.payload.agent_uuaid, REG);
   assert.deepEqual(write.payload.meta.commons, COMMONS_LABELS, "commons/1 labels travel with the post");
   assert.equal(stub.seen.filter((x) => x.url === "/agora/capabilities").length, 2, "one capability per write");
+  // [RT-6] each write gets a fresh nonce, so a capability is never reused (asserted here, not left to the server's 409)
+  const nonces = stub.seen.filter((x) => x.url === "/agora/capabilities/challenge").map((x) => JSON.parse(x.body).nonce);
+  assert.equal(new Set(nonces).size, nonces.length, "RT6-fresh-nonce-per-write");
   assert.equal(stub.seen.every((x) => x.cap === null || /^cap_\d+$/.test(x.cap)), true);
 });
 
@@ -195,7 +207,7 @@ test("AgoraPublisher: commons/1 §8 refuses before any network call, then publis
     [{ ...ok, authors: [{ uuaid: "a" }] }, "NO_CONSENT"], [{ ...ok, target: "standards-body" }, "TARGET"],
   ];
   const before = stub.seen.length;
-  for (const [c, want] of cases) await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: linked }).publish(c), code(want), want);
+  for (const [c, want] of cases) await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: linked }).publish(c), code(want), `RT5-refuses-${want}`);
   await assert.rejects(new AgoraPublisher({ client: client(k, stub.url) }).publish(ok), code("NOT_LINKED"), "inert until a principal is linked");
   await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { ...linked, status: "refused" } }).publish(ok), code("NOT_LINKED"));
   await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { ...linked, registry_uuaid: "uuaid:foundation:agent:00000000-0000-7000-8000-000000000000" } }).publish(ok), code("NOT_LINKED"));
@@ -222,7 +234,7 @@ test("V1-F1: a verified binding for a DIFFERENT key never unlocks publish, and n
   const k = key(); const stub = await stubAgora(t, { keychain: k });
   const otherKey = Keychain.generate({ uuaidNamespace: "agentnet" });
   const ok = { target: "agora", terms: "free", licence: "CC-BY-4.0", requesterConsent: true, authors: [], community: { source: "agentnet", sourceId: "42" }, body: "b" };
-  await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: otherKey.uuaid } }).publish(ok), code("NOT_LINKED"));
+  await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: otherKey.uuaid } }).publish(ok), code("NOT_LINKED"), "V1-F1-other-key-binding-refused");
   await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: k._identity.uuaid, publicKey: otherKey.publicKeyHex } }).publish(ok), code("NOT_LINKED"));
   assert.equal(stub.seen.length, 0, "zero network calls for a wrong-key binding");
   const own = await new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: k._identity.uuaid, publicKey: k._identity.publicKeyHex } }).publish(ok);
@@ -232,7 +244,7 @@ test("V1-F1: a verified binding for a DIFFERENT key never unlocks publish, and n
 test("V1-F2: a sparse array (or an array with extra properties) is refused before signing", () => {
   const k = key(); let signed = 0; const spy = { _identity: k._identity, sign: (b) => { signed++; return k.sign(b); } };
   const extra = [1]; extra.note = "x";
-  for (const bad of [{ items: new Array(1) }, { items: [1, , 3] }, { items: extra }]) assert.throws(() => sealUuaidEnvelope(bad, spy, "ac-k1"), code("NOT_JSON"));
+  for (const bad of [{ items: new Array(1) }, { items: [1, , 3] }, { items: extra }]) assert.throws(() => sealUuaidEnvelope(bad, spy, "ac-k1"), code("NOT_JSON"), "V1-F2-sparse-array-refused");
   assert.equal(signed, 0, "nothing signed");
   const dense = sealUuaidEnvelope({ items: [null] }, k, "ac-k1");
   assert.equal(jcs(dense.payload), JSON.stringify(dense.payload), "positive control: the signed JCS bytes equal the bytes sent");
@@ -243,16 +255,34 @@ test("V1-F3: a server that echoes the partner key never gets it into message, se
   const server = createServer(async (req, res) => { for await (const _ of req); res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: `rejected ${req.headers.authorization}`, reason: `echo ${PARTNER}` })); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r)); t.after(() => server.close());
   const err = await client(k, `http://127.0.0.1:${server.address().port}`).joinCommunity({ source: "a", slug: "b", sourceId: "c" }).catch((e) => e);
-  for (const field of ["message", "serverError", "reason", "stack"]) assert.equal(String(err[field]).includes(PARTNER), false, `${field} carries the partner key`);
+  for (const field of ["message", "serverError", "reason", "stack"]) assert.equal(String(err[field]).includes(PARTNER), false, `V1-F3-${field}-redacted`);
   assert.equal(err.serverError, "rejected Bearer [redacted]"); assert.equal(err.reason, "echo [redacted]");
 });
 
 test("V1-F4: a regex-shaped but impossible issuedAt is refused before signing; a real one signs", () => {
   const k = key(); let signed = 0; const spy = { _identity: k._identity, sign: (b) => { signed++; return k.sign(b); } };
   for (const bad of ["2026-99-99T99:99:99Z", "2026-02-30T00:00:00Z", "2026-11-09T24:00:00Z", "2026-11-09T23:59:60Z"]) {
-    assert.throws(() => buildIdentityBinding({ registryUuaid: REG, keychain: spy, issuedAt: bad }), code("ISSUED_AT"), bad);
+    assert.throws(() => buildIdentityBinding({ registryUuaid: REG, keychain: spy, issuedAt: bad }), code("ISSUED_AT"), `V1-F4-impossible-timestamp-refused ${bad}`);
   }
   assert.throws(() => buildIdentityBinding({ registryUuaid: REG, keychain: spy, now: () => NaN }), code("ISSUED_AT"), "a NaN clock");
   assert.equal(signed, 0, "nothing signed");
   assert.doesNotThrow(() => buildIdentityBinding({ registryUuaid: REG, keychain: k }), "positive control: now() signs");
+});
+
+test("V1-F3b: a partner key below the minimum, or with spaces, is refused before egress; an accepted key at the boundary is always redacted", async (t) => {
+  const k = key(); const echoed = [];
+  const server = createServer(async (req, res) => { for await (const _ of req); echoed.push(req.url); res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: `rejected ${req.headers.authorization}`, reason: `echo ${req.headers.authorization?.slice(7)}` })); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r)); t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const mk = (pk) => new AgoraClient({ url, keychain: k, keyId: "ac-k1", registryUuaid: REG, env: { AGENT_COMMONS_OFFLINE: "0", UUAID_PARTNER_KEY: pk } });
+  for (const bad of ["pk7abcd", "x".repeat(PARTNER_KEY_MIN_LENGTH - 1), "pk_live with space_abcdef", "pk_\u0007bell_abcdefghij"]) {
+    const err = (() => { try { mk(bad); return null; } catch (e) { return e; } })();
+    assert.equal(err?.code, "BAD_PARTNER_KEY", `refused: ${bad.length} chars`);
+    assert.equal(JSON.stringify({ m: err.message, s: err.stack }).includes(bad), false, "the refusal never contains the value");
+  }
+  assert.equal(echoed.length, 0, "no request was made with a refused key");
+  const edge = "k".repeat(PARTNER_KEY_MIN_LENGTH); // exactly the minimum: accepted, so it must be redacted everywhere
+  const err = await mk(edge).joinCommunity({ source: "a", slug: "b", sourceId: "c" }).catch((e) => e);
+  assert.equal(echoed.length, 1);
+  for (const field of ["message", "serverError", "reason", "stack"]) assert.equal(String(err[field]).includes(edge), false, `V1-F3b-${field}-redacted`);
 });

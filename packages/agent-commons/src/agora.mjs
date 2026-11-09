@@ -126,11 +126,18 @@ export function buildIdentityBinding({ aud = AGORA_AUDIENCE_DEFAULT, registryUua
   return { binding, signature };
 }
 
-/** Replace every occurrence of `secret` in `text`. Empty or short secrets are never matched (nothing to leak). */
+/**
+ * Replace every occurrence of `secret` in `text`. V1 F3 (re-review): no length floor here. Every value partnerKey()
+ * accepts is redacted. A minimum length is enforced where the key is ACCEPTED (PARTNER_KEY_MIN_LENGTH), never by
+ * skipping redaction.
+ */
 export function redactSecret(text, secret) {
-  if (typeof secret !== "string" || secret.length < 8) return text;
+  if (typeof secret !== "string" || secret.length === 0) return text;
   return text.split(secret).join("[redacted]");
 }
+/** A partner API key is at least this long and has no whitespace or control characters; anything else is refused before egress. */
+export const PARTNER_KEY_MIN_LENGTH = 16;
+const PARTNER_KEY_SHAPE = /^[\x21-\x7e]+$/;
 
 /** [RT-2] Egress is allowed ONLY when AGENT_COMMONS_OFFLINE is exactly "0", independent of any policy. */
 export function agoraEgressAllowed(env = process.env) { return env?.AGENT_COMMONS_OFFLINE === "0"; }
@@ -151,7 +158,11 @@ function partnerKey(env, name) {
   if (typeof name !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) fail("PARTNER_KEY_ENV", "partnerKeyEnv must be an environment variable name");
   const value = env?.[name];
   if (typeof value !== "string" || value.trim() === "") fail("NO_PARTNER_KEY", `set ${name} to the partner API key (agora:write); it is read only from the environment`);
-  return value.trim();
+  const trimmed = value.trim();
+  // V1 F3: refuse a value that is too short or has spaces or control characters BEFORE it is sent anywhere. The error
+  // names only the variable and the rule, never any part of the value.
+  if (trimmed.length < PARTNER_KEY_MIN_LENGTH || !PARTNER_KEY_SHAPE.test(trimmed)) fail("BAD_PARTNER_KEY", `${name} is not a partner API key (at least ${PARTNER_KEY_MIN_LENGTH} printable characters, no spaces)`);
+  return trimmed;
 }
 
 const AGORA_ACTIONS = new Set(["community.join", "community.leave", "community.post", "profile.update", "entry.vote", "entry.share", "profile.message.public"]);

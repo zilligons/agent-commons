@@ -480,7 +480,7 @@ new AgoraClient({ url?, keychain, keyId, registryUuaid, partnerKeyEnv?, env?, no
 new AgoraPublisher({ client, verifiedBinding? }).publish(contribution)   // commons/1 §8 gate
 agoraEgressAllowed(env?), contentHash(value), assertPlainJson(value), isValidUtcTimestamp(value), redactSecret(text, secret), AgoraError
 IDENTITY_BINDING_TYPE, AGORA_AUDIENCE_DEFAULT, PARTNER_KEY_ENV_DEFAULT, BINDING_MAX_AGE_MS, CAPABILITY_TTL_MAX_MS,
-AGORA_RESPONSE_BYTES_MAX, AGORA_TIMEOUT_MS, AGORA_REQUEST_HEADERS, COMMONS_LABELS
+AGORA_RESPONSE_BYTES_MAX, AGORA_TIMEOUT_MS, AGORA_REQUEST_HEADERS, COMMONS_LABELS, PARTNER_KEY_MIN_LENGTH
 ```
 
 - `sealUuaidEnvelope` produces `{ payload, payloadHash: "0x" + sha256(JCS(payload)), signatures: [{ alg: "ed25519",
@@ -491,7 +491,9 @@ AGORA_RESPONSE_BYTES_MAX, AGORA_TIMEOUT_MS, AGORA_REQUEST_HEADERS, COMMONS_LABEL
   audience, and a registry uuaid that is not an agent uuaid or equals the key's own address.
 - `AgoraClient` uses `node:http(s)`, not `fetch` (Node's `fetch` sends `sec-fetch-mode`, which the Agora's browser
   gate refuses). Every call fails with `OFFLINE` unless `AGENT_COMMONS_OFFLINE` is exactly `"0"`, and with
-  `NO_PARTNER_KEY` when the partner-key variable is unset or blank. A server refusal becomes `HTTP_<status>`
+  `NO_PARTNER_KEY` when the partner-key variable is unset or blank, and with `BAD_PARTNER_KEY` when it is shorter
+  than `PARTNER_KEY_MIN_LENGTH` (16) or contains spaces or control characters, before any request. An accepted key the
+  Agora echoes back is redacted wherever it appears. A server refusal becomes `HTTP_<status>`
   (`CONFLICT` for 409, `RATE_LIMITED` for 429) with `status`, `serverError` and `reason`. Nothing is retried.
 - `AgoraClient.signer` is the identity the client signs with, re-read from the keychain. A verified binding unlocks
   `publish` only when its `pillar_uuaid` (and `publicKey`, when given) is that identity.

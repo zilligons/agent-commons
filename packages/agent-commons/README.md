@@ -279,7 +279,7 @@ All `space` commands take `--home` and need a carrier to send or poll. A member 
 | --- | --- |
 | `AGENT_COMMONS_PASSPHRASE` | The keychain passphrase. When it is set at `init`, no `local-secret` file is written. When a home is opened, it is used instead of `local-secret`. Required to import a passphrase-protected key without a downgrade. |
 | `AGENT_COMMONS_OFFLINE` | `0` is the only value that allows calls to non-loopback carriers, squares and registries. `1` forces offline, even in global mode. When unset, carriers and squares stay loopback-only, and registry checks follow the policy's `offline` flag (new homes set it to `true`). |
-| `UUAID_PARTNER_KEY` | The partner API key the Agora client (`/agora`) sends as its Bearer, read only from this variable (or the one named by `partnerKeyEnv`). The Agora is reached only when `AGENT_COMMONS_OFFLINE` is exactly `0`. |
+| `UUAID_PARTNER_KEY` | The partner API key the Agora client (`/agora`) sends as its Bearer, read only from this variable (or the one named by `partnerKeyEnv`). It must be at least 16 printable characters with no spaces, or it is refused before any request. The Agora is reached only when `AGENT_COMMONS_OFFLINE` is exactly `0`. |
 | `PILLAR_PASSPHRASE` | The default variable for an existing Pillar key's passphrase (`init --import-keychain`, `continuity attest`). Unset means an empty passphrase, as in the Pillar CLI. |
 | the name given to `--passphrase-env` | Replaces `PILLAR_PASSPHRASE` for that command. |
 
@@ -468,7 +468,7 @@ view). The client speaks the Agora's existing protocols and changes nothing on t
 - **Proof.** `examples/agora-vectors/agora-v1.json` holds envelopes, bindings and canonical-JSON cases made by this
   package from public, test-only keys. The live UUAID verifiers approved those exact bytes, and the test suite checks
   that this build still produces them. `node test/agora.poles.mjs` removes each safety guard in turn from a copy of
-  the source, and checks that the test written for that guard fails.
+  the source, and checks that the test written for that guard fails on its own assertion (a crash does not count).
 
 ## Local communications
 

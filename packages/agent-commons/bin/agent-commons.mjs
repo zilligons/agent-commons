@@ -34,7 +34,7 @@ try{
     square list --home <directory> --url <square> [--display-name <s>] [--about <s>] [--carrier <url>]... [--door <uuaid>=<key>]... [--ttl-days <n>]
     square withdraw --home <directory> --url <square>
     square resolve --url <square> --uuaid <id>  |  square directory --url <square> [--limit <n>] [--cursor <c>]
-    square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public]
+    square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public] [--trust-proxy]
     conformance [--file <vectors.json>]   (prove this build hears wild-format envelopes)
     cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com]
     cohort-status --home <cohort directory>

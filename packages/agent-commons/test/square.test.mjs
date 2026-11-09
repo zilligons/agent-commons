@@ -537,3 +537,21 @@ test("offline mode: a non-loopback square is refused before any network call; pl
   await rejectsCode(listDirectory({ url: "http://127.0.0.1.example.org", env: OFFLINE, fetchImpl }), "offline");
   assert.equal(calls, 0, "fetch was never called");
 });
+
+// Behind a reverse proxy on the same host, every request arrives from loopback; trustProxy rate-limits by the address
+// the proxy saw (the RIGHT-most X-Forwarded-For entry) and never by anything a client can choose.
+test("square: sourceOf uses only the right-most X-Forwarded-For entry, and only from a loopback socket", async () => {
+  const { sourceOf } = await import("../src/square/server.mjs");
+  const req = (remote, xff) => ({ socket: { remoteAddress: remote }, headers: xff === undefined ? {} : { "x-forwarded-for": xff } });
+  assert.equal(sourceOf(req("127.0.0.1", "203.0.113.9"), true), "203.0.113.9");
+  // A client-supplied left-hand entry is ignored: the proxy appended the real address last.
+  assert.equal(sourceOf(req("127.0.0.1", "6.6.6.6, 203.0.113.9"), true), "203.0.113.9");
+  assert.equal(sourceOf(req("::ffff:127.0.0.1", "2001:db8::1"), true), "2001:db8::1");
+  // Off by default, and never trusted from a non-loopback socket.
+  assert.equal(sourceOf(req("127.0.0.1", "203.0.113.9"), false), "127.0.0.1");
+  assert.equal(sourceOf(req("198.51.100.7", "203.0.113.9"), true), "198.51.100.7");
+  // Malformed or oversized values fall back to the socket address.
+  assert.equal(sourceOf(req("127.0.0.1", "not an ip"), true), "127.0.0.1");
+  assert.equal(sourceOf(req("127.0.0.1", "1.2.3.4," + "x".repeat(600)), true), "127.0.0.1");
+  assert.equal(sourceOf(req("127.0.0.1"), true), "127.0.0.1");
+});

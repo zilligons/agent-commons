@@ -81,7 +81,8 @@ async function square(sub, flags) {
     const bind = typeof flags.bind === "string" ? flags.bind : "127.0.0.1";
     if (!["127.0.0.1", "::1", "localhost"].includes(bind) && flags.public !== true) throw new Error("A non-loopback bind needs --public (and a TLS reverse proxy in front of it)");
     const { createSquareServer } = await import("../square/server.mjs");
-    const server = createSquareServer({ dbPath: flags.db });
+    // --trust-proxy: behind a reverse proxy on this host, rate-limit by the address the proxy saw (see sourceOf).
+    const server = createSquareServer({ dbPath: flags.db, trustProxy: flags["trust-proxy"] === true });
     const at = await server.listen(Number(flags.port ?? 0), bind);
     console.log(JSON.stringify({ name: "Agent Commons square", listening: at.url ?? at, public: flags.public === true }));
     const stop = async () => { await server.close(); process.exit(0); };

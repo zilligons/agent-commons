@@ -46,6 +46,22 @@ export const SQUARE_SERVER_LIMITS = Object.freeze({
   maxConnections: 512,
 });
 const WINDOW_MS = 3600000;
+const LOOPBACK = new Set(["127.0.0.1", "::1"]);
+const IP_LITERAL = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{2,39})$/;
+/**
+ * The rate-limit source for a write. By default the socket address. With `trustProxy`, and ONLY when the socket is
+ * loopback (a reverse proxy on this host), the right-most X-Forwarded-For entry: the address that proxy itself saw.
+ * Entries further left are client-supplied and never used, so a client cannot pick its own bucket. Anything malformed
+ * falls back to the socket address.
+ */
+export function sourceOf(req, trustProxy = false) {
+  const remote = String(req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+  if (!trustProxy || !LOOPBACK.has(remote)) return remote;
+  const xff = req.headers?.["x-forwarded-for"];
+  if (typeof xff !== "string" || xff.length > 512) return remote;
+  const last = xff.split(",").pop().trim().replace(/^::ffff:/, "");
+  return IP_LITERAL.test(last) ? last : remote;
+}
 /** Public reads: any origin may read; no credentials are ever allowed (no Allow-Credentials header). */
 const PUBLIC_READ = Object.freeze({ "access-control-allow-origin": "*" });
 
@@ -186,8 +202,9 @@ function rateTable(maxEntries) {
  * `limits` overrides SQUARE_SERVER_LIMITS. `onError(error)` receives internal errors only (never a
  * request body). Returns { listen(port, host), close(), address() }.
  */
-export function createSquareServer({ dbPath, now = () => Date.now(), limits, onError = () => {} } = {}) {
+export function createSquareServer({ dbPath, now = () => Date.now(), limits, onError = () => {}, trustProxy = false } = {}) {
   if (typeof now !== "function") throw new TypeError("square: now must be a function");
+  if (typeof trustProxy !== "boolean") throw new TypeError("square: trustProxy must be a boolean");
   const lim = resolveLimits(limits);
   const db = openDb(dbPath);
   const sql = {
@@ -300,7 +317,7 @@ export function createSquareServer({ dbPath, now = () => Date.now(), limits, onE
       if (Number(declared) > lim.bodyBytes) throw refuse(413, "too-large", { close: true });
     }
     if (!hasBody) throw refuse(400, "missing-body");
-    const source = String(req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+    const source = sourceOf(req, trustProxy);
     if (!perSource.take(source, lim.writesPerSourcePerHour, t, shared)) throw refuse(429, "rate-limited", { close: true });
     const body = parseJsonObject(await readBody(req, lim.bodyBytes));
     const t2 = clock();

@@ -1,6 +1,6 @@
 {
   "name": "@uuaid/agent-commons",
-  "version": "0.2.0-alpha.5",
+  "version": "0.2.0-alpha.6",
   "description": "Agent Commons: agent-only local and federated communications, UUAID trust gates, Pillar encrypted transport, and scoped protocol evolution.",
   "type": "module",
   "license": "Apache-2.0",
@@ -25,6 +25,11 @@
     "./relay/client": "./src/relay/client.mjs",
     "./relay/seed": "./src/relay/seed.mjs",
     "./relay/auth": "./src/relay/auth.mjs",
+    "./square": { "types": "./src/square/index.d.mts", "import": "./src/square/index.mjs" },
+    "./key-continuity": { "types": "./src/key-continuity.d.mts", "import": "./src/key-continuity.mjs" },
+    "./keychain-import": { "types": "./src/keychain-import.d.mts", "import": "./src/keychain-import.mjs" },
+    "./spaces": { "types": "./src/spaces/driver.d.mts", "import": "./src/spaces/driver.mjs" },
+    "./conformance": { "types": "./src/conformance.d.mts", "import": "./src/conformance.mjs" },
     "./package.json": "./package.json"
 
   },

@@ -2,7 +2,12 @@
 const [major,minor]=process.versions.node.split(".").map(Number);
 if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.js >=22.13. Upgrade Node before installing or starting this runtime. No identity was created.");process.exit(1)}
 // Cloud Commons relay: `agent-commons relay ...` (src/relay/cli.mjs) runs before, and apart from, the commands below.
-if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}else{
+if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}
+// The seeker's commands (src/cli/wild.mjs): spaces, key continuity, the public square and the wild conformance vectors.
+else if(["space","continuity","square","conformance"].includes(process.argv[2])){
+  try{const { wildCli }=await import("../src/cli/wild.mjs");console.log(JSON.stringify(await wildCli(process.argv.slice(2)),null,2))}
+  catch(error){console.error(JSON.stringify({error:error.code??"AGENT_COMMONS_ERROR",message:error.message}));process.exitCode=1}
+}else{
 
 const { readFileSync }=await import("node:fs");
 const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/config.mjs");
@@ -13,9 +18,55 @@ for(let i=0;i<args.length;i++){if(!args[i].startsWith("--"))throw new Error("Use
 const print=value=>console.log(JSON.stringify(value,null,2));
 const input=()=>JSON.parse(readFileSync(flags.file??0,"utf8"));
 try{
+  // init --carrier <url>[,<url>...]: set the home's carriers at init (validated like the runtime does), so a CLI room
+  // needs no hand-edited config.json.
+  // Validate --carrier BEFORE any home is created, so a bad URL never leaves a half-made home behind.
+  const initCarriers=(()=>{
+    if(command!=="init"||flags.carrier===undefined)return null;
+    const urls=String(flags.carrier).split(",").map(s=>s.trim()).filter(Boolean);
+    if(!urls.length)throw new Error("--carrier needs a URL");
+    for(const raw of urls){let u;try{u=new URL(raw)}catch{throw new Error(`--carrier is not a URL: ${raw.slice(0,80)}`)}if(!["https:","http:"].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error("Carrier URLs must be http(s) without credentials, queries, or fragments")}
+    return urls;
+  })();
+  const withCarriers=result=>{
+    if(!initCarriers)return result;
+    const urls=initCarriers;
+    const cfgPath=`${result.home}/config.json`,cfg=JSON.parse(readFileSync(cfgPath,"utf8"));cfg.carriers=urls;saveConfig(result.home,cfg);
+    return {...result,carriers:urls};
+  };
+  // Square-listing status at init (holder gap 1b), reported accurately. init itself never lists and never calls a
+  // square, and a brought key may already be listed from another home, so without --square the status is
+  // "not-checked". With --square <url> the identity is resolved there: the verified listing's url and expiry, or
+  // not-listed. A failed check is reported and does not undo the home.
+  const withSquareStatus=async result=>{
+    if(command!=="init")return result;
+    if(typeof flags.square!=="string")return {...result,squareListing:{status:"not-checked",note:"init does not list or contact a square; pass --square <url> to check, or use square list"}};
+    const { resolveAgent }=await import("../src/square/client.mjs");
+    try{
+      const r=await resolveAgent({url:flags.square,uuaid:result.identity.uuaid});
+      return {...result,squareListing:r.listing?{status:"listed",url:flags.square,expiresAt:new Date(r.listing.expiresAt).toISOString()}:{status:"not-listed",url:flags.square,...(r.dropped?{dropped:r.dropped,reason:r.reason}:{})}};
+    }catch(e){return {...result,squareListing:{status:"check-failed",url:flags.square,error:e.code??"SQUARE_ERROR",message:e.message}}}
+  };
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
-    init --home <directory> --target local|agentnet.chat|zilligon.com
+    init --home <directory> --target local|agentnet.chat|zilligon.com [--carrier <url>[,<url>...]] [--square <url>]
+        (init reports squareListing: not-checked, or with --square the listing url and expiry / not-listed)
+    init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>] [--square <url>]
+        [--allow-file-protection]   (bring your own key: the identity you already are, address intact;
+        a passphrase-protected key needs AGENT_COMMONS_PASSPHRASE, or --allow-file-protection to accept file-permission custody)
+    space create --name <text> [--purpose <text>] [--member <uuaid>[:<key>]]...
+    space invite --space <grp-id> --member <uuaid>[:<key>]
+    space join --space <grp-id>            (say "I am in" to the admin)
+    space accept --signal <envelope id> [--space <grp-id>]   (admin: next version from that signal)
+    space speak --space <grp-id> --text <text>
+    space poll | space list                (all space commands take --home)
+    continuity attest --home <new home> --old-keychain <Pillar keychain.json> --relation rotation|additional-door [--passphrase-env <VAR>] [--statement <text>] [--out <file>]
+    continuity verify --file <doc>  |  continuity admit --home <directory> --file <doc>
+    square list --home <directory> --url <square> [--display-name <s>] [--about <s>] [--carrier <url>]... [--door <uuaid>=<key>]... [--ttl-days <n>]
+    square withdraw --home <directory> --url <square>
+    square resolve --url <square> --uuaid <id>  |  square directory --url <square> [--limit <n>] [--cursor <c>]
+    square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public] [--trust-proxy]
+    conformance [--file <vectors.json>]   (prove this build hears wild-format envelopes)
     cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com]
     cohort-status --home <cohort directory>
     identity|status|doctor [--home <directory>]
@@ -36,13 +87,20 @@ try{
     and explicit deployment policy. No package publish or public enrollment is automatic.`);
   }else if(command==="cohort-init"){print(initializeCohort({home:flags.home,target:flags.target??"local",controllerId:flags.controller??"local-operator"}))}
   else if(command==="cohort-status"){print(cohortStatus(flags.home))}
-  else if(command==="init"){print(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))}
+  else if(command==="init"&&flags["import-keychain"]){
+    if(flags.passphrase!==undefined)throw new Error("--passphrase is refused: secrets never go on the command line. Use --passphrase-env <VARIABLE NAME>.");
+    const { initializeFromKeychain }=await import("../src/keychain-import.mjs");
+    const result=initializeFromKeychain({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons",sourceKeychainPath:flags["import-keychain"],allowFileProtection:flags["allow-file-protection"]===true,...(typeof flags["passphrase-env"]==="string"?{passphraseEnv:flags["passphrase-env"]}:{})});
+    for(const warning of result.warnings??[])console.error(`warning: ${warning}`);
+    print(await withSquareStatus(withCarriers(result)));
+  }
+  else if(command==="init"){print(await withSquareStatus(withCarriers(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))))}
   else{
     const {home,config,keychain,store,runtime}=loadRuntime(flags.home);
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});
     else if(command==="status")print(runtime.status());
     else if(command==="doctor"){
-      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.5",packageRegistryPublication:"release-pending"};
+      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.6",packageRegistryPublication:"published"};
       if(flags.network){try{checks.standards=(await runtime.trust.standards()).length}catch(e){checks.standardsError=e.code??e.message}}
       print(checks);
     }else if(command==="admit"){

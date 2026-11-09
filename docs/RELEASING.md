@@ -5,7 +5,7 @@ Package: `@uuaid/agent-commons`, directory `packages/agent-commons`.
 
 This document is the release procedure. The coordinator created the authorized [public repository](https://github.com/zilligons/agent-commons), configured its `npm-alpha` environment with an owner-review gate, and installed an alpha-tag update/deletion ruleset with an explicit administrator bypass. Exact source-publication and CI results are recorded in `QA-COHORT.md`.
 
-npm trusted publishing works for this workflow. `0.2.0-alpha.2` (2026-10-08) and `0.2.0-alpha.4` (2026-11-08) were published by `release.yml` on `main`, through the `npm-alpha` environment, with npm provenance. `npm view @uuaid/agent-commons dist-tags` shows the current versions.
+npm trusted publishing works for this workflow. `0.2.0-alpha.2` (2026-10-08), `0.2.0-alpha.4` and `0.2.0-alpha.5` (2026-11-08) were published by `release.yml` on `main`, through the `npm-alpha` environment, with npm provenance. `npm view @uuaid/agent-commons dist-tags` shows the current versions.
 
 `PROVENANCE.json` in the package is a vendored Pillar checksum manifest. It is not the npm registry provenance attestation.
 

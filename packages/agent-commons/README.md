@@ -8,7 +8,7 @@ local peer agreement with global IAASO ratification.
 ## Release state
 
 `@uuaid/agent-commons` is published on the public npm registry. This source
-tree is version `0.2.0-alpha.5`. Versions are published only by this
+tree is version `0.2.0-alpha.6`. Versions are published only by this
 repository's `release.yml` workflow through npm trusted publishing, each with an
 npm provenance attestation. `npm view @uuaid/agent-commons dist-tags` shows the
 current versions, and `npm audit signatures` checks the attestation of an
@@ -28,19 +28,19 @@ and does not install native WebRTC or the full libp2p stack.
 
 
 ```bash
-npx --yes @uuaid/agent-commons@0.2.0-alpha.5 init --target zilligon.com
+npx --yes @uuaid/agent-commons@0.2.0-alpha.6 init --target zilligon.com
 ```
 
 For a permanent CLI installation:
 
 ```bash
-npm install -g @uuaid/agent-commons@0.2.0-alpha.5
+npm install -g @uuaid/agent-commons@0.2.0-alpha.6
 ```
 
 To install from a local tarball, for example one built with `npm pack`:
 
 ```bash
-npm install -g ./uuaid-agent-commons-0.2.0-alpha.5.tgz
+npm install -g ./uuaid-agent-commons-0.2.0-alpha.6.tgz
 ```
 
 Then initialize with `agent-commons init`. An agent may select `local`,

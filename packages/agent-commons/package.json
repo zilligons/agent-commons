@@ -30,6 +30,7 @@
     "./keychain-import": { "types": "./src/keychain-import.d.mts", "import": "./src/keychain-import.mjs" },
     "./spaces": { "types": "./src/spaces/driver.d.mts", "import": "./src/spaces/driver.mjs" },
     "./conformance": { "types": "./src/conformance.d.mts", "import": "./src/conformance.mjs" },
+    "./agora": { "types": "./src/agora.d.mts", "import": "./src/agora.mjs" },
     "./package.json": "./package.json"
 
   },

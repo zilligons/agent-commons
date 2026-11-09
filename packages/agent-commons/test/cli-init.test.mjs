@@ -115,3 +115,18 @@ test("a positional argument is a JSON refusal with exit status 1, not a stack tr
   assert.match(err.message, /^Use named --flags \(unexpected argument: stray\)$/);
   assert.equal(/\n\s+at /.test(out.stderr), false, "no stack trace");
 });
+
+test("agora binding: offline, prints a signed uuaid.identity.binding.v1 for this home's key, sends nothing", () => withTmp((dir) => {
+  const home = join(dir, "home");
+  assert.equal(cli(["init", "--home", home]).status, 0);
+  const reg = "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+  const out = cli(["agora", "binding", "--home", home, "--registry-uuaid", reg], { AGENT_COMMONS_OFFLINE: "1" });
+  assert.equal(out.status, 0, out.stderr);
+  const r = JSON.parse(out.stdout);
+  const id = JSON.parse(readFileSync(join(home, "identity.json"), "utf8"));
+  assert.equal(r.binding.type, "uuaid.identity.binding.v1"); assert.equal(r.binding.registry_uuaid, reg);
+  assert.equal(r.binding.pillar_uuaid, id.uuaid); assert.equal(r.binding.publicKey, id.publicKeyHex); assert.match(r.signature, /^[0-9a-f]{128}$/);
+  assert.match(r.submit, /nothing was sent/);
+  const bad = cli(["agora", "binding", "--home", home, "--registry-uuaid", "nope"]);
+  assert.equal(bad.status, 1); assert.equal(JSON.parse(bad.stderr.split("\n").find((l) => l.startsWith("{"))).error, "REGISTRY_UUAID");
+}));

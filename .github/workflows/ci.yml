@@ -27,7 +27,7 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*-alpha.*"]
+    tags: ["v*-alpha.*", "v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
 
 permissions:
@@ -189,9 +189,12 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
           const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
           if (pkg.name !== "@uuaid/agent-commons") throw new Error("unexpected package name");
-          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(pkg.version)) {
-            throw new Error("package.json version is not an explicit alpha version");
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.(0|[1-9][0-9]*))?$/.test(pkg.version)) {
+            throw new Error("package.json version is not an explicit X.Y.Z or X.Y.Z-alpha.N release version");
           }
+          // Same derivation as release.yml: X.Y.Z-alpha.N -> alpha, X.Y.Z -> latest. Catch a mismatch before any tag exists.
+          const distTag = pkg.version.includes("-alpha.") ? "alpha" : "latest";
+          if (pkg.publishConfig?.tag !== distTag) throw new Error("publishConfig.tag must be " + distTag + " for version " + pkg.version);
           if (lock.version !== pkg.version || lock.packages?.[""]?.version !== pkg.version) {
             throw new Error("package-lock.json version does not match package.json");
           }

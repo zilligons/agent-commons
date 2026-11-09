@@ -1,0 +1,239 @@
+{
+  "v": "agent-commons/wild-vectors/1",
+  "warning": "TEST-ONLY KEYS. The seeds below are public. Never use these identities for anything real.",
+  "recipient": {
+    "uuaid": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+    "publicKeyHex": "5f38f6ca982b3349c31529c497bec70abfed0b259bec8aeb9d621c5b72010371",
+    "seedHex": "817a8dc61129f9650969559b90329837af0462fc820e9ef617f776917020f93f"
+  },
+  "admitted": [
+    {
+      "uuaid": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+      "publicKeyHex": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555"
+    }
+  ],
+  "cases": [
+    {
+      "name": "plain-dm",
+      "about": "A plain-format Pillar DM ({text}) from an admitted, key-pinned sender.",
+      "envelopes": [
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-plaindm-0001",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "22310634915930af8963cc537c0b5d1f863685bf78eb5f2df7cc18b7f4ee3a26",
+            "iv": "74a14916e030f266b185cc9b",
+            "ct": "0da5ca2d2fd2b39d6981ce6314eefb3eceb8ca58ec22791ff9e431cbc105c34db8e7816b89ff98cf86d95b5a160b"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "4a5735a8e2441c70cd81fe8f228ff069537682a9a824fba504448dbdb71eb15007f27469ab6c652426137b851126eacce7ac7397800db64a76f906cbe818670f",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "runtime": "accepted",
+          "format": "pillar-plain",
+          "text": "hello from the wild"
+        }
+      ]
+    },
+    {
+      "name": "plain-dm-any-shape",
+      "about": "A plain payload that is not {text}: still heard, payload intact.",
+      "envelopes": [
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-plainany-0001",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "047832d4f902381a59ca39dc5ea2f26e19cc0f03c1b1975c828d00d740de8a3f",
+            "iv": "45d1f817e3c6d5829585c00d",
+            "ct": "d74b1f5f69cbe52ae6ca3ad5d44e2fd2c06516040347a2044e3b970fe6339f6ed76ea63129c2a0ffb0f2aae5fdfd83"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "ab1c8a4e5e487b3f24063dd1324f5fd3ea4f73cf9fd62a56565f0b65aef9142b4b254a587eefd0e0f7ec9451adcb652a38aaeac084e6b415734efd49b0d6220f",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "runtime": "accepted",
+          "format": "pillar-plain",
+          "payloadKeys": [
+            "note",
+            "seq"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "plain-dm-stranger",
+      "about": "The same shape from a sender nobody admitted: refused, never heard.",
+      "envelopes": [
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-stranger-0001",
+          "sender": "uuaid:pillar:agent:7abda24f-c48a-797c-0640-5895b04eb2fa",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "4f8b063364c20175ee11482bd55acd7b70fe04ccb65a53f36dbf6a4ffd26cf28",
+            "iv": "4bc142e2e00b4cbd73a52b89",
+            "ct": "3978fd42a9797dca68c4da3f4d0f9599a449af87a648d984963ad7b5c40207fcb75bf46c"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:pillar:agent:7abda24f-c48a-797c-0640-5895b04eb2fa",
+            "publicKey": "fca0c15c9bc8d135243e794a76d4dca944d325246dcd2e0d682ab2e50a41d3cc",
+            "signature": "150674c8c8b8a05f1235a00d2a2a9d8868088a495620a2ee37a7ed57f2665b71f47c5c8fc7bbd6d340b499b1c9f9f4f8026649f2dd41b39a7cec97a7ed16d208",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "runtime": "refused",
+          "code": "NOT_ADMITTED"
+        }
+      ]
+    },
+    {
+      "name": "group-manifest-invitation",
+      "about": "A groups-v2 manifest (version 1) inviting the recipient.",
+      "envelopes": [
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-manifest-0001",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "2761c99f33d7de4b67fd8e0baefceaa17e316001a9e94db740370f1bc90e0e3f",
+            "iv": "33d4c71288893e4592a4e7b3",
+            "ct": "c87235d7f9d49a400add84fd0c021feae8a906477c91e9c4e07a3a1245301b409861c9404ec35e812baea842ea19dbd6fb2fe293f09fe6a7250a20613e384347abc10ecdf0718143c7d3fa55ec7aa19756d50fa7864d0b73ad72e235e60b33abeb7550eb7d87e6f35f5011a0338d34a034b9cbdea1ed36d16bbfcaced83d2716f9664dd9e53ff70681c9c8f9e323d17db2e5a79ae7c315b73cf78e9207c271021897d0aeb6003fd2dc7b813aa4762234e8de50a094fca6f97ad3b47d16a1031337556e9169e27b3a2c8eacbc28537043840d928ca8ea7a3a2449cf66026ceae14d10f5857b1a6307f7c45a31af7e80045838f633a645c9b2a0b6358b78a7ff90471dbec5f672ecf87120d125f4a62e0e439a0adac0cfd75019cb624ffdd06bc91170acfb567e573c6a1d39f7ed92df1c810cbe1f3b6d18d09783c8217122068f53bd2fd6adf451f7f0f834f713d5ee3200cd6f535f7b594426fa76917badbb7a3d2fc8aee480ad0de8ea913a4a4fc2ea2e36bfa26294ab8e47aa55f630e859854631ef4f2e491f9e8fa3a7bf404fc02f60e13a4f8379d6532f022f8ad85229d090a273259821694fbd1baff77cd40236dcde834fbee56cc6efb5deb9f7f2bd5707ae4131e0be3ffbf40d31b3e9ec5817add77f954d5364e81ba633ce0e131a46590f48d22db1cbe457d8a21c85aae2b82656e06a31295e6f9f6e71214074cb3045342cae5826956a719b339ed41b190743e2abad0f8632be3c05df93228ca0610cdb5c30b64f0ee218e3de0b8381af700b456e116f9867e1754882da156729b1ffb21c24395727fa1ec1fbb88922969ff548051f1af2c9320c52afda11e8a2e24469ce3a2d78018a19c12ea8f8325cd4026d12b3295f04e0281cea74e5683c34a0765b99a3d60847296096dd06cfbad664b6fba5a4bfa4429303fdc42d9551d4b97e0ab483afc184462dfe9a32a2f79dec20e7dfdd246f2104919f94fe80599204631c671749dfc93371142476f8963acb8710ca70bed77ed6f1550b229834e2e2d16059e97b0b17875b1d1d298bfb0f9f79b1c5568714834aa8eb3a87b72e3e62d16fa198a73ec423ed57c88f8529182dc695beccb3f219fa5c49860d635157236582c8b3c1b03626c072f7f0bf0a58d0a52da563c4d17fd9fafa1140e5529f54120287707ce8de6cd4696b33fefd0b5646d86a945f31f01b19b8c35e82ac8a075bed7e577ead9c302fc697da2c296877c025c977e1c8c91fc43d20a9977223c3a2e9911d520c58e41da08acb317991d95195912e79f12f0689985b1d47663b9ed8674d7bf3be8ebe427683ca3499a52f3e1bc4ee51e16c31a53b1e8b595222145d82c6d9807582e7a1b1155563a1fb3c77af39a47b05d19bec4008a4e6599624b0c605d6743cc415fadb3eb4b26cb840cff68d69bc6b8054188c5c8cd85a47e6d1f1e24cbe28da3361248af5a36304882e70e074764a1498c9e96210febc1f65bcdd0f1c99eabdf166f287e7b047ceddc5e690805ee4f40ec529d6b3b3866c1accba70ac7fdd24a8fee7cb01a267f5f3755abce52982264a5c98fb963a521272476d4695067d21b9b941a92049c00b58da827fbfe3537d9e18dd9efa5760543574cd94cc06aa2a405d78c16a3dadd051297db69dd1d90d800475ac146de2b3d25efe6c7646681d835811c570e90cf95bea7472d98346b7f78fbc33650a25c97f8790c8999efb41058316ef4482b83e17e7cc19b56aa8eb6ab19a5135dc65bf444057473eddc9e97a3ba268a2283e61018ac16c3c8e6edc4971ed2394a1bf2fb69f52eb9952eb3ee3fafb7b9809ec42050a0b139fd0169f935f5d4894c05303c8861d14bba456c448fbc9621efce97dc63f42da49ccb2f3fd"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "03a6f69c5c22707bfae2bdf66a5325e65fb18db34fc269a6a2f8668d2a8ba835b4940dff2a6ba5350bb04d6730cefc80c85115d80405cfc19e748632facb430c",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "runtime": "accepted",
+          "group": "grp-6a2dcc5381c8d8b1ce8f93c51ee79f9c",
+          "groupVerdict": "invitation"
+        }
+      ]
+    },
+    {
+      "name": "plain-in-space-message",
+      "about": "Invitation, accept (v2), then a plain message inside the space.",
+      "envelopes": [
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-space-0001",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "a5e1a28919f11b3064a4f87722f3fb1d361b9dafad0856095fe07186cfd8be15",
+            "iv": "ef3b5ae0ffcca7aafba2ce46",
+            "ct": "19dc47d5db95b730112ba39a91f0b9b1e3cce4c69314e868a7ee802757db9f0eb55716505c3e95c84ecba5a51c1c43fe274d73c34491e323be38fb19962a2f88391fa2f5e154469f9782144063d1945e2d9614379c614053513d7e139582d1a4f86a53f192dc5a026f0f86da22d8d614f213874d4a2ca9cb4f09f120d0acee4a670fe23da32105a8d69c8b255043d8d424c8c790909b560cd0f9519bcee164d9fbed9d1f2dac9af1cc44d7e3084ad6eb7bb813bfe58e2e430e01dc50656954819113bdf133b0b2f69d812ef4541ba114747b2ff61d5cc1b622494d8f11b3f591cacc2c2cb26397fed0b1bddcb80d894e7a66510f3cfcd289b708033f8cc23e67b80d2c3f8313b57fc2b2a2993def164d8d9aaa222ba35f23db287c4ed47d3735c0cc526a8c30e37a8d301a9003dbd1ebb346c97d457c4dc3488dd26ef6f40971bf06bcb735554c9b9f32f73d7efe07e493192e1c623a0c41009f1e507d2a63fef40f5971bd26d24d3afeda205387c605dd09d8f65973163ee84a3268d691c8f0ff30ced7a04b461ccb4dc4f99a3a982f893de057dad104e1bcf9f1274e73df6c8483761d65d5de72b9fe5b8baad2f1655b68999679b50ff6383b8af2188e320fd838c35eb8323a80218744e4adb68aa0ba43f9845196a2226aecb68b3c03e9c09c4f842ad279d0dbb8a31007eac60258c43c41989422c8fd093254adee5ffd5a6f9278c332630ee54717534359b27b28f057471315592ef6ae222479948e1e2b9de24264a7d857bb796e5320aa48f88dab4619d874b897bf373f020708db95185a413b1a04f2b36b5a78511bc6b5e5db8b95791ea60a9f065f4689cded80c6612763d90ee50d90528c3d252683853a221e37efc747544160a0ff049e690169e37fad9120b90f411969323fdcb3575dc88b9a320259ecd677c4a6942932f753fef3785e468944971e4f9cbde85fb01d540576ca3cabadf4ebf215b48be3ae17e2bc3733154784791c0bbc3cbbc84256159faa2dec6723244c1bf7824e353593c97d6d976ddf1e325e216a3905845aa9dd8aa92b231cc0358327c9f80f66833d8835eeb9da332badb3b4eabd44c18c991fc8f518e093a774d64419cce7c1d5317ea3614ae3b35efffe2ee325e3257907b8fea1ffd6f586ffa83bdfe82a4d13f9d7105390cd0fd9caa2b9061b49834aefc48e41c5ba2c961d0ec7ec7648778be490a2e2259007ea32d07f30b0d849b8b3bc1236c0ed822aa7be76fc279bdf4d9aad3ba74462e2ec499c1e9be569ea63ec7b3b9c435ea553d669fb01901b23ac42686827c8898374853a9cdc0e77e7cd650ce966176cc6c071535b25a3ccc84f7b2059068d38fa1451d70730d0f487adb5a8fc71ed1491e919948ffb5204871f73be32a7e2423216b984a0df4274e2628f21d9967c4075968f393094a6de9b5dc7e4ae5b5f0683a8d1789861d0b8dd454dda219241fc1fa6023417ea090b02938614034ca9bb18faa7faedd25b7c33339bf192e3128b21cf9f8635056ac138fc2f39f470d85577acbe8bf5af608cfc8f5754430c7e3462f42452f4c8565527029c73a6f91a51aa5bac0dff135f0d47c95483dd15fee25e59a9d0ff0c4f013e0e3f0c01522cbc0d53267ebf0334410502d14940a68ce56d2a0708508839c103d4912d6c664ac4ab37b409b5550ce4cd44bd582b9b84570713e99c8da8ab0b9083a5e8b1df057503a5f68b9fc4828a7f70d41ce875947416617b7a2e6a0266d59ae2725260d51a8dd1e90bebf4761cdeca8865eff105b4261ec0ae7beb8ff2271141999f4c47b45bca6e6d6747c0486ef2affd0c01a0b68db079bd3517ee9b774192622f54e2a8af9280fa71699b5ba2a54ff19c025262bad724417b"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "71435a70da5b931509f988318058a221e6b499124452c2f543af17fd0704642385c33a8edb5095794300fa440630398b274c5d5fce6042a46f84e0be10166a0b",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        },
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-space-0002",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "e62e12f293a45b244dc2f4b117faf4b82922be81cdb7a84b67676c21dcf78360",
+            "iv": "819699b1d68599b55e481a11",
+            "ct": "2c8af7732a54aaa15b90a3c02499cb2875810d79b5d946327fe0fe9fd3eb69f1e589f87c995e9cce107db3f128755da364bad97be1f6e24a55dbff5888eff2f6f67fad4db896b823ab429d10974b93701670547484fb02f4070c296556ebca419ada8adc25562217ed65b6bee4ff555cdfec47674f9563a9498a23c60df14850bff0a4c3e76142a1a2d655740d759094e3605ae14026594ff1995402ba757f42adfb327fdff6ee37a57c74638e44d6a108a6c83ae4be8e6c94c77b2939d3978fb2487351f6cbb6aa9d99abbde78b1f34e552848d51e2c7caec150364794638cde1b9a9ea2ccf45e5d6a9d52389fa551ad4492a36e6c58eee9d9fd539dcdc7810d11ac34d540a38a43ce378d8f164b4aeef75c9128ddef981fdfe9d8cb1aa4ac5bc011d2f43f6c0591fbd4244c83a30a359038704a0241b2a868186d21e0eb6b7f6a5e5837b8faae0a864b1637950f68ad6dbb93754c9924cfecd4aa1a056bcc59a8d38a9d8774e6cc3b6e3cd20307c249729ad32b795284943e856064329f7d45ad4764e6f9283290709ef84200269b52f621e42a58bf66bf56aacd8cf9f5b1de8dcd3eb2798a1c1e7c096577182dcf140e6c133811d30859bf2c6ca173ba015bec4cd16c246b5f51d23c55ea3aefc136f8c909b6acc341ae8a7c8120c1caeeeb2ce01e339940a8072746da74f5eb26569e7ca461c7c345bae62253f0438dff768cfe134e0ebf95cc052c6108a9ea006183a4fb9372ec297fe5509dfb47894eecd70df2110ce025310f3d7c7ab6e56873db63cb6d009f04ec84634848535a046b4492370e6d3a6479bf2929309ab3c5b308e71a14f71a44dc49acf63e2b4d8bce6c4bee81636e8e309b986a0d6a675aac12c6946473905fb1e972913e264c6f99e7ab866c97c2f1c3f35d8f6a2c8e307d3b99265e1614fd35a8d85195a96eb855d26004f492347da6efcc7aba79dfe4560ec67f107250c8434a6dba709f877d1a7280c5b33db3f072d81997eea7f4b94a0b471110d99938bd9fedf9d47e652833b688c119264983329b3195a1a4dd72aa8b134d75b347d2715c7f56599b12d452ee08dc002ace43c22908c2212e173afc17c04ec293035a50a11acbb3253a47ced734d3954d266595c1aedc7bb59a384f5f7007ef6da9f8c3a0f6b006a7a77aaa3a3ba0c81fecbb5742cc661e957e1e507c1cdc29d40655fd6d8c8f68ba7fe31c7757aa5990e634a69ff356c5731c354b55ef4db973bab3a628977da4d9fe80f69d3d666d81224efd2c6a013cb81bee13a395c0c44fba564dd60c8ca26ecb510fe80963712e420258bfac84996b5e29ad487c3df9405641877bd298a41220fae7721ae6044bed1dbe1c16d4aa8f8de968c638c63fed15ae869efa6b5aec83adbde9ba904aa040390281c1f0a3ff02d6871362644a173b0ff702c606d073bccbdce59dce1674ec162ac6d0e7d39a8277437e3e64bbb02000cfc0f72664e84c6148f4de22b7706461edbd96e5738a24da28c5857b6e303990cfdacef0deae83079a3b5c8d5b2091daca36069a49f2aa2b482753f968f7321cc3d8c693b70d18d2e20c72fdd13fbf7eab665d316db45c968e6379ed066998983433aa1ee03e7c85bc9f7af36fea333ae7f6efbe1e8c398cd5434c4cb4e8f5b3d4c888a87faff5bf9c5ff638d78bf756968767a69b78f06e9df8bc1077ec71b55c4aaa9a8ff43088502337179aee0bd3413eb2d475809cdd384092d0b41f8a27ebf11e8d147b5a35c92034eeda578970409498aa4990a1d9b72bc7fb119f7d0e91b309221cf8656038f75b6f1bc61bb8ff944b9586b87cc9df37fbf514878afbe205d1e22691fd909720d369589dad251734505327ff5ebbfaaaf7febfa630094205e0c0bbdd2e4b9f8fb43fd66f26a546f227f0614cc897f0ee5a4da34c919f35fa2c6b5d3e8a22388ad5ccf70d438f9345ff43c72def8bae638b9f73cfc229fee2a5fa86f9061390e5c7dab442f6352e466671f78f5885b49cfdab8229b8bcecd99ff120111ef55760bbfb95d59c4c3258ecf1dcc6bf768094974f3357f6aaa2c88899b3325d755a7e8cbaa413331d974a9dea7070732b8b2a6bc64cd6fa7fab6cc3b9bf8a1cc94f7767fd4f4ed603bc2acb3934ba070eec19ce7cd7902ab4de3da9fb4fac0bda22dbc44aa"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "44c9b6752caea0cb58a9041654f7da89da3691b7631acf7ec8fa976f77bb69591a57bd2cc1aeb692a1c75ba6bc40c903feb0cd4111576e822f207526bf5ea00d",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        },
+        {
+          "version": "uuaid-pillar-envelope/2",
+          "id": "env-wildvector-space-0003",
+          "sender": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+          "recipient": "uuaid:foundation:agent:7a5d592a-248c-d933-1358-1d1ddbb3b3f3",
+          "kind": "message",
+          "enc": {
+            "alg": "x25519-hkdf-sha256-aes256gcm",
+            "epk": "cbc50b893e9f1981e5da3abcbdc45a77908f0148011dac1b67fd04e69083983c",
+            "iv": "8dea8f3ae9823aaa71674559",
+            "ct": "3bdc1cf41b72f4bca76e2dca1104e519ceedde6b0ff8847c97ca0b50eb71471b2aaab16d1350ef5f5a0f4b7185773e55cb6814c9a7ca5d317b1453b99ec9b2c16417aa56af3bfcdb8b48b1b7eb4588642365823016887eb483480eb2c256e7484b110b935aa64019868c35b43d6729670bd6dfec95fe2656a050630e4d5f64c29e73fbd5d0488e48cc9f9781bec7640d7a4d2810eadf47a5f337dd6bacbd05bf9912cefd78643bfda1f6dc052c35aa39fc61fd5bd51c51c61bd06765c290807d3a4a723fcc68b76d65f7d3d305051c3f27aff1ee45d114c9ec314da82ba8fe25608abaacfa2dbd68790c18a0fb136c2200c1cc93017fba7366e9b466b253cee7598ef0461fa2598623eefda450cc7021f5ff47b23968b337e7703249df9b1e49a8051ba3bf47c5fbf214174e3a67f45e47a7c4ced94d19020e90f8dda29c4f20c6a12d267dc474d9694002603dd96f7e56d53923d4017c1d43677a59c1bc6f9162c2f03c428023efce5b70fe221eabb67e9a7070a7308e81275f1763e5b0c2ec0f429166370d39175f8261fbb2ec358df3e44b9e95af04e29e5d249bbb5303e083a13e520b"
+          },
+          "createdAt": "2026-11-08T21:00:00.000Z",
+          "transportSignature": {
+            "alg": "ed25519",
+            "keyId": "uuaid:agentnet:agent:bb0e81f9-5e03-5709-00f0-cb909a4ec21c",
+            "publicKey": "6f08b065557671f64b4570a3d629a5b65694ac9bdb4a7d883fd4f51ace203555",
+            "signature": "cbdabf17bca633c64183397cab2975deb6da5b0322cfe29028bd1c1342b116b22c08c311fe7638428139e7a3f853a0f83ba25373eab1f0def0474e31c742b402",
+            "created": "2026-11-08T21:00:00.000Z"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "runtime": "accepted",
+          "groupVerdict": "invitation"
+        },
+        {
+          "runtime": "accepted",
+          "groupVerdict": "accepted"
+        },
+        {
+          "runtime": "accepted",
+          "groupVerdict": "accepted",
+          "text": "welcome to the room"
+        }
+      ]
+    }
+  ]
+}

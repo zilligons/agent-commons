@@ -201,7 +201,11 @@ export class AgentCommons {
     if(envelope.delegation!==undefined)throw new Error("Delegated host admission requires a configured principal-status adapter; not yet enabled");
     await this.trust.authorize(envelope.sender,envelope.transportSignature.publicKey,"commons:message");
     const payload=decrypt(this.keychain,envelope);
-    if(payload?.v!==BASE_PROTOCOL||payload.profileId===undefined||!["message","profile-control"].includes(payload.kind)||typeof payload.wire!=="string"||Buffer.byteLength(payload.wire)>64000||typeof payload.id!=="string"||!/^[0-9a-f-]{36}$/.test(payload.id)||!Number.isFinite(Date.parse(payload.expiresAt))||Date.parse(payload.expiresAt)<=Date.now())throw new Error("Invalid or expired Agent Commons payload");
+    // Tolerant ingress: a plain-format Pillar message (any payload that does not claim agent-commons/1) from a sender
+    // that just passed admission above, under its pinned key, is a first-class message. A payload that DOES claim
+    // agent-commons/1 keeps the strict checks below, so the commons wire format is never weakened.
+    if(payload?.v!==BASE_PROTOCOL)return this.receivePlain(envelope,payload);
+    if(payload.profileId===undefined||!["message","profile-control"].includes(payload.kind)||typeof payload.wire!=="string"||Buffer.byteLength(payload.wire)>64000||typeof payload.id!=="string"||!/^[0-9a-f-]{36}$/.test(payload.id)||!Number.isFinite(Date.parse(payload.expiresAt))||Date.parse(payload.expiresAt)<=Date.now())throw new Error("Invalid or expired Agent Commons payload");
     const msgKey=`msg:${envelope.sender}:${payload.id}`;if(this.seenScoped(msgKey,payload.id,digest(payload)))return {duplicate:true};
     const profile=await this.authorizedProfile(payload.profileId),body=decode(payload.wire,profile.lexicon);
     if(digest(body)!==payload.bodyHash)throw new Error("Lossless body digest mismatch");
@@ -250,6 +254,21 @@ export class AgentCommons {
     }
     this.store.transaction(()=>{this.store.mark(msgKey,digest(payload));this.store.append(`msg:${envelope.sender}:${payload.id}`,{kind:"message-received",sender:envelope.sender,envelopeId:envelope.id,profileId:profile.id,bodyHash:payload.bodyHash,wireBytes:Buffer.byteLength(payload.wire)})});
     return {id:payload.id,sender:envelope.sender,thread:payload.thread,body,profileId:profile.id,accepted:true,receipt:{kind:"host-accepted",notProofOfTaskCompletion:true}};
+  }
+  // A plain Pillar message (no agent-commons/1 wrapper). The caller (receiveInternal) has already verified the envelope
+  // and authorized the sender's pinned key for commons:message; this re-checks the pin, bounds the payload, dedupes on
+  // the envelope id, and records metadata only (never the body) in the audit chain.
+  receivePlain(envelope,payload){
+    const agent=this.policy.agents?.[envelope.sender];
+    if(!agent||agent.kind!=="agent"||agent.publicKey!==envelope.transportSignature?.publicKey)throw new Error("Plain Pillar message from a sender that is not admitted under its pinned key");
+    if(payload===null||typeof payload!=="object"||Array.isArray(payload))throw new Error("Plain Pillar payload must be a JSON object");
+    let bytes;try{bytes=Buffer.byteLength(JSON.stringify(payload))}catch{throw new Error("Plain Pillar payload is not serializable")}
+    if(bytes>64000)throw new Error("Plain Pillar payload exceeds 64000 bytes");
+    const sha=envelopeSha(envelope),key=`plain:${envelope.sender}:${envelope.id}`;
+    if(this.store.seen(key,sha))return {duplicate:true};
+    const group=payload._group&&typeof payload._group==="object"&&!Array.isArray(payload._group)&&typeof payload._group.id==="string"?payload._group.id:null;
+    this.store.transaction(()=>{this.store.mark(key,sha);this.store.append(key,{kind:"plain-message-received",sender:envelope.sender,envelopeId:envelope.id,envelopeKind:envelope.kind,sha,payloadBytes:bytes,group})});
+    return {id:envelope.id,sender:envelope.sender,format:"pillar-plain",kind:envelope.kind,createdAt:envelope.createdAt,transportKey:envelope.transportSignature.publicKey,payload,...(typeof payload.text==="string"?{text:payload.text}:{}),...(group?{group}:{}),accepted:true,receipt:{kind:"host-accepted",notProofOfTaskCompletion:true}};
   }
   releaseHeld(){const next=this._receiveTail.then(()=>this.releaseHeldInternal());this._receiveTail=next.catch(()=>{});return next}
   async releaseHeldInternal(){

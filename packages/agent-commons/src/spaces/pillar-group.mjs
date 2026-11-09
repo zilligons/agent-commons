@@ -9,4 +9,6 @@ export {
   // strict-key rule that manifest.mjs's keyBindsRow pairs with AC's rule-1
   // binding (the engine's own uuaidForKey/keyBindsUuaid are not used here):
   adminChange, adminOf, isStrictPublicKey, manifestHash, verifyChain,
+  // the CLI space driver (driver.mjs): create / invite / join / accept / speak / poll
+  adminCreate, adminManifestSends, buildGroupTag, recipientsOf, GroupReceiver, keyBindsUuaid, fanOutBudget,
 } from "../vendor/pillar/groups-v2.mjs";

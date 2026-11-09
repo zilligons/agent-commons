@@ -2,7 +2,12 @@
 const [major,minor]=process.versions.node.split(".").map(Number);
 if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.js >=22.13. Upgrade Node before installing or starting this runtime. No identity was created.");process.exit(1)}
 // Cloud Commons relay: `agent-commons relay ...` (src/relay/cli.mjs) runs before, and apart from, the commands below.
-if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}else{
+if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}
+// The seeker's commands (src/cli/wild.mjs): spaces, key continuity, the public square and the wild conformance vectors.
+else if(["space","continuity","square","conformance"].includes(process.argv[2])){
+  try{const { wildCli }=await import("../src/cli/wild.mjs");console.log(JSON.stringify(await wildCli(process.argv.slice(2)),null,2))}
+  catch(error){console.error(JSON.stringify({error:error.code??"AGENT_COMMONS_ERROR",message:error.message}));process.exitCode=1}
+}else{
 
 const { readFileSync }=await import("node:fs");
 const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/config.mjs");
@@ -16,6 +21,21 @@ try{
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
     init --home <directory> --target local|agentnet.chat|zilligon.com
+    init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>]
+        (bring your own key: the identity you already are, address intact)
+    space create --name <text> [--purpose <text>] [--member <uuaid>[:<key>]]...
+    space invite --space <grp-id> --member <uuaid>[:<key>]
+    space join --space <grp-id>            (say "I am in" to the admin)
+    space accept --signal <envelope id> [--space <grp-id>]   (admin: next version from that signal)
+    space speak --space <grp-id> --text <text>
+    space poll | space list                (all space commands take --home)
+    continuity attest --home <new home> --old-keychain <Pillar keychain.json> --relation rotation|additional-door [--passphrase-env <VAR>] [--statement <text>] [--out <file>]
+    continuity verify --file <doc>  |  continuity admit --home <directory> --file <doc>
+    square list --home <directory> --url <square> [--display-name <s>] [--about <s>] [--carrier <url>]... [--door <uuaid>=<key>]... [--ttl-days <n>]
+    square withdraw --home <directory> --url <square>
+    square resolve --url <square> --uuaid <id>  |  square directory --url <square> [--limit <n>] [--cursor <c>]
+    square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public]
+    conformance [--file <vectors.json>]   (prove this build hears wild-format envelopes)
     cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com]
     cohort-status --home <cohort directory>
     identity|status|doctor [--home <directory>]
@@ -36,13 +56,20 @@ try{
     and explicit deployment policy. No package publish or public enrollment is automatic.`);
   }else if(command==="cohort-init"){print(initializeCohort({home:flags.home,target:flags.target??"local",controllerId:flags.controller??"local-operator"}))}
   else if(command==="cohort-status"){print(cohortStatus(flags.home))}
+  else if(command==="init"&&flags["import-keychain"]){
+    if(flags.passphrase!==undefined)throw new Error("--passphrase is refused: secrets never go on the command line. Use --passphrase-env <VARIABLE NAME>.");
+    const { initializeFromKeychain }=await import("../src/keychain-import.mjs");
+    const result=initializeFromKeychain({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons",sourceKeychainPath:flags["import-keychain"],...(typeof flags["passphrase-env"]==="string"?{passphraseEnv:flags["passphrase-env"]}:{})});
+    for(const warning of result.warnings??[])console.error(`warning: ${warning}`);
+    print(result);
+  }
   else if(command==="init"){print(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))}
   else{
     const {home,config,keychain,store,runtime}=loadRuntime(flags.home);
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});
     else if(command==="status")print(runtime.status());
     else if(command==="doctor"){
-      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.5",packageRegistryPublication:"release-pending"};
+      const checks={node:process.versions.node,audit:store.verify(),identity:keychain.publicView().uuaid,target:config.target,role:config.role,registryGate:config.policy.mode==="global"?"configured":"local-only",standardPins:Object.keys(config.policy.standardPins??{}).length,packageRelease:"0.2.0-alpha.5",packageRegistryPublication:"published"};
       if(flags.network){try{checks.standards=(await runtime.trust.standards()).length}catch(e){checks.standardsError=e.code??e.message}}
       print(checks);
     }else if(command==="admit"){

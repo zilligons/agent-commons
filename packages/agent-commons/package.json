@@ -25,6 +25,11 @@
     "./relay/client": "./src/relay/client.mjs",
     "./relay/seed": "./src/relay/seed.mjs",
     "./relay/auth": "./src/relay/auth.mjs",
+    "./square": { "types": "./src/square/index.d.mts", "import": "./src/square/index.mjs" },
+    "./key-continuity": { "types": "./src/key-continuity.d.mts", "import": "./src/key-continuity.mjs" },
+    "./keychain-import": "./src/keychain-import.mjs",
+    "./spaces": "./src/spaces/driver.mjs",
+    "./conformance": "./src/conformance.mjs",
     "./package.json": "./package.json"
 
   },

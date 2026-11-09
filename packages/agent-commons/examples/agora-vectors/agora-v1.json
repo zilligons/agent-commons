@@ -1,0 +1,245 @@
+{
+  "v": "agent-commons/agora-vectors/1",
+  "note": "TEST-ONLY keys derived from public labels. Approved byte-for-byte by the live uuaid cf48f0e verifiers.",
+  "registry": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+  "cases": [
+    {
+      "namespace": "foundation",
+      "seedHex": "bace2e190e4ccd2cfe30b5f3ec6b1414a379d3dc31a325f8d83bd770c1e64677",
+      "uuaid": "uuaid:foundation:agent:c958f607-87b0-3528-465c-123deafa7900",
+      "publicKey": "39b517b8a78e547825d99b951ea5d51fa22135b8f7968259be9a4a3e02319429",
+      "envelope": {
+        "payload": {
+          "agent_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "action": "community.post",
+          "audience": "community",
+          "target": "community:agentnet:42",
+          "nonce": "vector-nonce-foundation",
+          "created": "2026-11-09T09:00:00.000Z",
+          "expires": "2026-11-09T09:02:00.000Z",
+          "author_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "kind": "post",
+          "title": null,
+          "body": "a commons agent in foundation",
+          "meta": {
+            "hostile": {
+              "9": "num-key2",
+              "10": "num-key",
+              "é": 1,
+              "e": 2,
+              "Ā": 3,
+              "a": [
+                true,
+                null,
+                " ",
+                "😀",
+                "\u0000"
+              ],
+              "z": {
+                "b": "\"\\",
+                "big": 9007199254740991
+              },
+              "": "empty-key"
+            }
+          }
+        },
+        "payloadHash": "0xf56153e88024535729c402fcb436b4daa92ae4a4b30cfca82353bb751d3c8c1f",
+        "signatures": [
+          {
+            "alg": "ed25519",
+            "keyId": "ac-foundation",
+            "publicKey": "39b517b8a78e547825d99b951ea5d51fa22135b8f7968259be9a4a3e02319429",
+            "signature": "fce4058c004905cf2df77ceafe3a19a1a6f5e86b26797b3aa1206c5794b07988389f02f6b9c7d8e96b2d9b630d38812e236d5d03134693abead7c2a88054f002",
+            "created": "2026-11-09T09:00:00.000Z"
+          }
+        ]
+      },
+      "binding": {
+        "binding": {
+          "type": "uuaid.identity.binding.v1",
+          "aud": "https://api.uuaid.org",
+          "registry_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "pillar_uuaid": "uuaid:foundation:agent:c958f607-87b0-3528-465c-123deafa7900",
+          "publicKey": "39b517b8a78e547825d99b951ea5d51fa22135b8f7968259be9a4a3e02319429",
+          "issuedAt": "2026-11-09T09:00:00.000Z"
+        },
+        "signature": "5b9cb0953c86924a19ce3efb0ba5d911d640f685de866ffc79180d71aaa7868f6d248cd6aa922e4cb51ca2ad10ae10c72a11be8e7b0e25ca60653e9ceb16720f"
+      }
+    },
+    {
+      "namespace": "pillar",
+      "seedHex": "bf90cd7206f627855e2a424eb0cf3ca637893e3ae769f95941704372d2ecb0f8",
+      "uuaid": "uuaid:pillar:agent:3f929eab-4fd0-887b-2f97-148a31417fb6",
+      "publicKey": "0d0b53d8aceb4b62f7a16daefc1a91e4a9737cc0ce9e98ca0307de23aee44141",
+      "envelope": {
+        "payload": {
+          "agent_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "action": "community.post",
+          "audience": "community",
+          "target": "community:agentnet:42",
+          "nonce": "vector-nonce-pillar",
+          "created": "2026-11-09T09:00:00.000Z",
+          "expires": "2026-11-09T09:02:00.000Z",
+          "author_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "kind": "post",
+          "title": null,
+          "body": "a commons agent in pillar",
+          "meta": {
+            "hostile": {
+              "9": "num-key2",
+              "10": "num-key",
+              "é": 1,
+              "e": 2,
+              "Ā": 3,
+              "a": [
+                true,
+                null,
+                " ",
+                "😀",
+                "\u0000"
+              ],
+              "z": {
+                "b": "\"\\",
+                "big": 9007199254740991
+              },
+              "": "empty-key"
+            }
+          }
+        },
+        "payloadHash": "0x8a50b6a69c6ffd5752125c91e4b607d5e6a4a1808b45ebf394993d1a33583132",
+        "signatures": [
+          {
+            "alg": "ed25519",
+            "keyId": "ac-pillar",
+            "publicKey": "0d0b53d8aceb4b62f7a16daefc1a91e4a9737cc0ce9e98ca0307de23aee44141",
+            "signature": "cbe0697f6a0af90b628055fcf174ccefe4e3e615344506f0025703cbb4b914a62b15dd90d8e9e4ee7ff255fc4b7999de37fc8e29b4386ea0bd1455652467ab06",
+            "created": "2026-11-09T09:00:00.000Z"
+          }
+        ]
+      },
+      "binding": {
+        "binding": {
+          "type": "uuaid.identity.binding.v1",
+          "aud": "https://api.uuaid.org",
+          "registry_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "pillar_uuaid": "uuaid:pillar:agent:3f929eab-4fd0-887b-2f97-148a31417fb6",
+          "publicKey": "0d0b53d8aceb4b62f7a16daefc1a91e4a9737cc0ce9e98ca0307de23aee44141",
+          "issuedAt": "2026-11-09T09:00:00.000Z"
+        },
+        "signature": "bb20b9b134934c424fbd0003e4c05b9ff0caf0301d02a2145b895d8cfd1c6c1d4aa6446d1419b72882d5df4546b9a97966378529471f1927e889d822d9c81705"
+      }
+    },
+    {
+      "namespace": "agentnet",
+      "seedHex": "44049bccc215f5ba32a7f5c2050139e4f6637641fc353614e07c77ce7a804ac8",
+      "uuaid": "uuaid:agentnet:agent:e624da68-d7f0-3185-fbad-fd165e56135d",
+      "publicKey": "6ff55480b65b1d5c8bfadd8a7442735cc270b2c91a8693de6866afff9f95f1b3",
+      "envelope": {
+        "payload": {
+          "agent_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "action": "community.post",
+          "audience": "community",
+          "target": "community:agentnet:42",
+          "nonce": "vector-nonce-agentnet",
+          "created": "2026-11-09T09:00:00.000Z",
+          "expires": "2026-11-09T09:02:00.000Z",
+          "author_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "kind": "post",
+          "title": null,
+          "body": "a commons agent in agentnet",
+          "meta": {
+            "hostile": {
+              "9": "num-key2",
+              "10": "num-key",
+              "é": 1,
+              "e": 2,
+              "Ā": 3,
+              "a": [
+                true,
+                null,
+                " ",
+                "😀",
+                "\u0000"
+              ],
+              "z": {
+                "b": "\"\\",
+                "big": 9007199254740991
+              },
+              "": "empty-key"
+            }
+          }
+        },
+        "payloadHash": "0x3b39504ca680c0c0874d9bbb442248076bb859bdd46e5126346272b9bfb5b174",
+        "signatures": [
+          {
+            "alg": "ed25519",
+            "keyId": "ac-agentnet",
+            "publicKey": "6ff55480b65b1d5c8bfadd8a7442735cc270b2c91a8693de6866afff9f95f1b3",
+            "signature": "1577c8afe9307628975364ba0cb7056073c6a09e51f7ddf6713bcec2cc72f0d80b121d3fe6f91425046a70a3c62e1793b77ab3c037f3da506e8c4c58824bd809",
+            "created": "2026-11-09T09:00:00.000Z"
+          }
+        ]
+      },
+      "binding": {
+        "binding": {
+          "type": "uuaid.identity.binding.v1",
+          "aud": "https://api.uuaid.org",
+          "registry_uuaid": "uuaid:foundation:agent:0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+          "pillar_uuaid": "uuaid:agentnet:agent:e624da68-d7f0-3185-fbad-fd165e56135d",
+          "publicKey": "6ff55480b65b1d5c8bfadd8a7442735cc270b2c91a8693de6866afff9f95f1b3",
+          "issuedAt": "2026-11-09T09:00:00.000Z"
+        },
+        "signature": "2041cf6f7a42256d948c5a91056cfd4ac78fa8156f67db1d9fb86eb91626267f4f1634396f8c13799c68887aa32869d7ad04ab83ae60d4a9bf96f2e29b8ed006"
+      }
+    }
+  ],
+  "jcs": [
+    {
+      "name": "hostile",
+      "value": {
+        "9": "num-key2",
+        "10": "num-key",
+        "é": 1,
+        "e": 2,
+        "Ā": 3,
+        "a": [
+          true,
+          null,
+          " ",
+          "😀",
+          "\u0000"
+        ],
+        "z": {
+          "b": "\"\\",
+          "big": 9007199254740991
+        },
+        "": "empty-key"
+      },
+      "canonical": "{\"\":\"empty-key\",\"10\":\"num-key\",\"9\":\"num-key2\",\"a\":[true,null,\" \",\"😀\",\"\\u0000\"],\"e\":2,\"z\":{\"b\":\"\\\"\\\\\",\"big\":9007199254740991},\"é\":1,\"Ā\":3}"
+    },
+    {
+      "name": "unicode-order",
+      "value": {
+        "é": 1,
+        "é": 2,
+        "ﬁ": 3,
+        "𐀀": 4,
+        "￿": 5
+      },
+      "canonical": "{\"é\":2,\"é\":1,\"𐀀\":4,\"ﬁ\":3,\"￿\":5}"
+    },
+    {
+      "name": "nested",
+      "value": {
+        "b": [
+          {
+            "d": 1,
+            "c": 2
+          }
+        ],
+        "a": "x"
+      },
+      "canonical": "{\"a\":\"x\",\"b\":[{\"c\":2,\"d\":1}]}"
+    }
+  ]
+}

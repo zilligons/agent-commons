@@ -156,7 +156,8 @@ PILLAR_PASSPHRASE=… AGENT_COMMONS_PASSPHRASE=… agent-commons init --home <di
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--import-keychain` | required | Path to the existing Pillar `keychain.json`. It is only read, never rewritten. |
-| `--passphrase-env` | `PILLAR_PASSPHRASE` | The name of the environment variable that holds the source passphrase. Unset means an empty passphrase, as in the Pillar CLI. Must be a valid variable name. |
+| `--passphrase-env` | `UUAID_PARTNER_KEY` | the Agora client (`/agora`) | The partner API key (scope `agora:write`), sent only as the Bearer to the configured Agora origin. Read only from this variable (or the one named by `partnerKeyEnv`); never from the command line, a file or a log. The Agora client is reached only when `AGENT_COMMONS_OFFLINE` is exactly `0`, whatever the policy says. |
+| `PILLAR_PASSPHRASE` | The name of the environment variable that holds the source passphrase. Unset means an empty passphrase, as in the Pillar CLI. Must be a valid variable name. |
 | `--allow-file-protection` | off | Accepts a downgrade: a passphrase-protected key copied under file-permission protection. |
 
 `--target`, `--name`, `--carrier` and `--square` work as in `init`.
@@ -601,6 +602,18 @@ Plays the shipped wild-format vectors (`examples/wild-vectors/wild-v1.json`, 10 
 path, or the vectors in `--file`. It prints `{ "vectors", "passed", "failed", "cases" }` and exits 1 if any case
 failed. The vectors use public, test-only keys.
 
+## Agora
+
+```bash
+agent-commons agora binding --home <directory> --registry-uuaid <uuaid> [--aud <https origin>]
+```
+
+Offline. Prints `{ binding, signature, submit, validForSeconds }`: a `uuaid.identity.binding.v1` that links this home's
+key-derived identity to the registry agent named by `--registry-uuaid`, signed by this home's key over
+`"uuaid.identity.binding.v1\n" + JCS(binding)`. `--aud` defaults to `https://api.uuaid.org`. Nothing is sent: the
+partner submits it to `POST /agents/bindings` within 60 seconds. It refuses a registry uuaid that is not an agent
+uuaid, or that equals this home's own address. Agora writes are library-only (`@uuaid/agent-commons/agora`).
+
 ## Cloud Commons relay client
 
 ```bash
@@ -644,7 +657,7 @@ client. No project-operated relay exists yet.
 | Variable | Read by | Meaning |
 | --- | --- | --- |
 | `AGENT_COMMONS_PASSPHRASE` | `init`, every command that opens a home, `init --import-keychain` | The keychain passphrase. At `init`, when it is set, no `local-secret` file is written. When opening a home, it is used instead of `local-secret`. |
-| `AGENT_COMMONS_OFFLINE` | carriers, the square client, the trust layer | `0` is the only value that allows calls to non-loopback hosts. `1` forces offline, even in global mode. When unset: carriers and squares stay offline. The registry and authority checks are offline unless the policy sets `offline: false`, or the policy is in global mode and does not set `offline`. Loopback is always allowed. |
+| `AGENT_COMMONS_OFFLINE` | carriers, the square client, the trust layer, the Agora client | `0` is the only value that allows calls to non-loopback hosts. `1` forces offline, even in global mode. When unset: carriers and squares stay offline. The registry and authority checks are offline unless the policy sets `offline: false`, or the policy is in global mode and does not set `offline`. Loopback is always allowed. |
 | `PILLAR_PASSPHRASE` | `init --import-keychain`, `continuity attest` | The default source for an existing Pillar key's passphrase. Unset means an empty passphrase. |
 | any name given to `--passphrase-env` | the same two commands | Replaces `PILLAR_PASSPHRASE` as the source passphrase variable. |
 

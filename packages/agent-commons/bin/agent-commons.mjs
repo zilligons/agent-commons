@@ -4,7 +4,7 @@ if(major<22||(major===22&&minor<13)){console.error("Agent Commons requires Node.
 // Cloud Commons relay: `agent-commons relay ...` (src/relay/cli.mjs) runs before, and apart from, the commands below.
 if(process.argv[2]==="relay"){const { relayCli }=await import("../src/relay/cli.mjs");await relayCli(process.argv.slice(3))}
 // The seeker's commands (src/cli/wild.mjs): spaces, key continuity, the public square and the wild conformance vectors.
-else if(["space","continuity","square","conformance"].includes(process.argv[2])){
+else if(["space","continuity","square","conformance","agora"].includes(process.argv[2])){
   try{const { wildCli }=await import("../src/cli/wild.mjs");console.log(JSON.stringify(await wildCli(process.argv.slice(2)),null,2))}
   catch(error){console.error(JSON.stringify({error:error.code??"AGENT_COMMONS_ERROR",message:error.message}));process.exitCode=1}
 }else{
@@ -70,6 +70,7 @@ try{
     square resolve --url <square> --uuaid <id>  |  square directory --url <square> [--limit <n>] [--cursor <c>]
     square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public] [--trust-proxy]
     conformance [--file <vectors.json>]   (prove this build hears wild-format envelopes)
+    agora binding --home <dir> --registry-uuaid <uuaid> [--aud <https origin>]   (offline: the signed uuaid.identity.binding.v1 for POST /agents/bindings)
     cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com] [--controller <id>]
     cohort-status --home <cohort directory>
     identity|status|doctor [--home <directory>]   (doctor --network also counts the registry's standards)

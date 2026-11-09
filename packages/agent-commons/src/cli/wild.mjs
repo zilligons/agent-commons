@@ -1,4 +1,4 @@
-// CLI for the seeker's commands: space, continuity, square, conformance.
+// CLI for the seeker's commands: space, continuity, square, conformance, agora (offline binding only).
 // Separate from the main flag parser because these take a subcommand and repeatable flags (--member, --carrier, --door).
 import { readFileSync, writeFileSync } from "node:fs";
 import { Keychain } from "../pillar.mjs";
@@ -108,6 +108,18 @@ async function square(sub, flags) {
   throw new Error("square serve|list|withdraw|resolve|directory");
 }
 
+// agora: OFFLINE only. Builds the signed uuaid.identity.binding.v1 an operator submits to POST /agents/bindings.
+// Networked Agora writes are library-only (src/agora.mjs AgoraClient); none of them is a CLI command.
+async function agora(sub, flags) {
+  if (sub !== "binding") throw new Error("agora binding --home <dir> --registry-uuaid <uuaid> [--aud https://api.uuaid.org]");
+  need(flags, "registry-uuaid");
+  const { buildIdentityBinding, AGORA_AUDIENCE_DEFAULT } = await import("../agora.mjs");
+  return withRuntime(flags.home, async ({ keychain }) => {
+    const signed = buildIdentityBinding({ registryUuaid: flags["registry-uuaid"], keychain, aud: typeof flags.aud === "string" ? flags.aud : AGORA_AUDIENCE_DEFAULT });
+    return { ...signed, submit: "POST /agents/bindings with { items: [this] } using your partner key; nothing was sent", validForSeconds: 60 };
+  });
+}
+
 export async function wildCli(argv) {
   const [area, sub, ...rest] = argv;
   if (area === "conformance") {
@@ -122,5 +134,6 @@ export async function wildCli(argv) {
   if (area === "space") return space(sub, flags);
   if (area === "continuity") return continuity(sub, flags);
   if (area === "square") return square(sub, flags);
+  if (area === "agora") return agora(sub, flags);
   throw new Error(`Unknown command ${area}`);
 }

@@ -5,13 +5,13 @@ Package: `@uuaid/agent-commons`, directory `packages/agent-commons`.
 
 This document is the release procedure. The coordinator created the authorized [public repository](https://github.com/zilligons/agent-commons), configured its `npm-alpha` environment with an owner-review gate, and installed an alpha-tag update/deletion ruleset with an explicit administrator bypass. Exact source-publication and CI results are recorded in `QA-COHORT.md`.
 
-npm trusted publishing works for this workflow. `0.2.0-alpha.2` (2026-10-08), `0.2.0-alpha.4` and `0.2.0-alpha.5` (2026-11-08) were published by `release.yml` on `main`, through the `npm-alpha` environment, with npm provenance. `npm view @uuaid/agent-commons dist-tags` shows the current versions.
+npm trusted publishing works for this workflow. `0.2.0-alpha.2` (2026-10-08), `0.2.0-alpha.4`, `0.2.0-alpha.5` and `0.2.0-alpha.6` (2026-11-08) were published by `release.yml` on `main`, through the `npm-alpha` environment, with npm provenance. `npm view @uuaid/agent-commons dist-tags` shows the current versions.
 
 `PROVENANCE.json` in the package is a vendored Pillar checksum manifest. It is not the npm registry provenance attestation.
 
 ## What runs automatically
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on pull requests, pushes to `main`, and alpha tags. It tests the package and cold-installs the packed tarball. It has `contents: read` only. It does not publish, and it must not be given `id-token: write`.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on pull requests, pushes to `main`, and release tags (`v*-alpha.*` and `vX.Y.Z`). It tests the package and cold-installs the packed tarball. It has `contents: read` only. It does not publish, and it must not be given `id-token: write`.
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) does **not** run on push. Publish is `workflow_dispatch` only. A tag push is not a publish.
 
@@ -40,17 +40,17 @@ Runners are `ubuntu-24.04` and must report `RUNNER_ENVIRONMENT=github-hosted`. S
 
 ## Immutable dispatch version
 
-The release input `version` is required and has no default. It is not a bump. The workflow rejects anything other than `X.Y.Z-alpha.N` with no `v` prefix, no `latest`, and no other prerelease.
+The release input `version` is required and has no default. It is not a bump. The workflow accepts exactly two shapes, `X.Y.Z` (a stable release) and `X.Y.Z-alpha.N` (an alpha), with no `v` prefix, no range, no `latest`, no leading zeros, and no other prerelease. It rejects everything else.
 
 Dispatch must be from `refs/heads/main`, so the reviewed workflow file runs. The job then checks out only the annotated tag `v<version>`. A branch HEAD is refused. The tag must be an annotated tag (`git cat-file -t` is `tag`). The workflow does not create, move, or delete tags.
 
 `package.json` and `package-lock.json` must already equal that version. The workflow will not rewrite them.
 
-The npm dist-tag is the literal `alpha`, not an input. `publishConfig.tag` must already be `alpha`, `access` must be `public`, and `provenance` must be boolean `true`.
+The npm dist-tag is derived from the version and is never an input: `X.Y.Z-alpha.N` publishes to `alpha`, and `X.Y.Z` publishes to `latest`. The guard, the verify job and the publish step each derive it again, and CI checks it on every pull request. `publishConfig.tag` must already equal that dist-tag, `access` must be `public`, and `provenance` must be boolean `true`.
 
 The publish job packs again and refuses to publish unless the tarball SHA-256 matches the pack that passed the cold install. It also refuses if the checked-out tag commit is not the verified commit. `github.sha` on a `workflow_dispatch` from `main` is the branch SHA, not the tag, so the workflows compare `git rev-parse HEAD` after the tag checkout.
 
-GitHub cannot make a tag immutable from this file. The configured alpha-tag ruleset blocks ordinary update and deletion, but the administrator's documented bypass preserves owner authority. Annotated tags and workflow digest checks are necessary and are not a claim of absolute immutability.
+GitHub cannot make a tag immutable from this file. The configured tag ruleset (it covers `refs/tags/v*`, so alpha and stable release tags alike) blocks ordinary update and deletion, but the administrator's documented bypass preserves owner authority. Annotated tags and workflow digest checks are necessary and are not a claim of absolute immutability.
 
 ## Cold install
 
@@ -76,7 +76,7 @@ When the input is true, the publish job waits on the GitHub environment `npm-alp
 Publish command, with scripts ignored so `prepublishOnly` does not run beside the OIDC permission:
 
 ```bash
-npm publish --ignore-scripts --provenance --access public --tag alpha --registry https://registry.npmjs.org/
+npm publish --ignore-scripts --provenance --access public --tag "$DIST_TAG" --registry https://registry.npmjs.org/
 ```
 
 `--provenance` is explicit even though trusted publishing can generate provenance without the flag ([generating provenance statements](https://docs.npmjs.com/generating-provenance-statements/)). Provenance is generated only for a public repository and a public package ([trusted publishers](https://docs.npmjs.com/trusted-publishers/)). The workflow fails closed unless repository visibility is `public` and the server is `https://github.com`.
@@ -145,19 +145,21 @@ npm logout
 
 Do this only after trust works. Setting `mfa=publish` before the trusted publisher exists blocks CI and leaves only interactive 2FA publish.
 
-6. Confirm the configured alpha-tag protection ruleset and its explicit owner bypass. Use the reviewed workflow on `main` and an annotated `vX.Y.Z-alpha.N` tag on the commit whose package version exactly matches. Do not move a release tag.
+6. Confirm the configured tag protection ruleset (`refs/tags/v*`) and its explicit owner bypass. Use the reviewed workflow on `main` and an annotated `vX.Y.Z` or `vX.Y.Z-alpha.N` tag on the commit whose package version exactly matches. Do not move a release tag.
 7. Let CI pass on that commit. Then `workflow_dispatch` from `main` with that exact version. Approve `npm-alpha` only after the verify log shows no credential material.
 8. Confirm the registry version from a public read. Do not run `npm whoami`, `npm token`, `npm config list`, `env`, or `printenv` to confirm it.
 
 ## The `latest` dist-tag
 
-`release.yml` publishes only to the `alpha` dist-tag. Moving `latest` is a separate step that a package owner runs by hand after the published version has been checked:
+A stable `X.Y.Z` release publishes straight to `latest` through `release.yml`, so dispatching a stable version is also the decision to move `latest`. An alpha publishes only to `alpha` and leaves `latest` alone.
+
+Moving `latest` by hand is still possible, for example to roll back to the previous version. A package owner runs it after checking the target version:
 
 ```bash
-npm dist-tag add @uuaid/agent-commons@X.Y.Z-alpha.N latest
+npm dist-tag add @uuaid/agent-commons@<version> latest
 ```
 
-It needs the owner's npm two-factor approval, and it is reversible by pointing `latest` back at the previous version. Leave `latest` alone if the owner has not asked for the move.
+It needs the owner's npm two-factor approval. Leave `latest` alone if the owner has not asked for the move.
 
 ## No secret echo
 

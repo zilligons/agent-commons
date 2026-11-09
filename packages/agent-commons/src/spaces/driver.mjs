@@ -9,6 +9,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { open, decrypt, seal } from "../pillar.mjs";
+import { keyIsBlocked } from "../uuaid-namespace.mjs";
 import {
   RosterStore, isGroupIdV2, adminCreate, adminChange, adminManifestSends, buildGroupTag, recipientsOf,
   GroupReceiver, keyBindsUuaid, manifestHash, adminOf, fanOutBudget,
@@ -19,6 +20,8 @@ export class SpaceDriverError extends Error {
 }
 const fail = (code, message) => { throw new SpaceDriverError(code, message); };
 const ENV_ID = /^env-[0-9A-Za-z_-]{6,128}$/;
+/** Outbound refusals reported per recipient (in sent[]) instead of aborting a batch. */
+const OUTBOUND_REFUSALS = new Set(["RECIPIENT_NOT_ADMITTED", "RECIPIENT_BLOCKED"]);
 const head = (rec) => rec.chain[rec.chain.length - 1];
 
 /**
@@ -30,6 +33,17 @@ export function judgeEnvelope(receiver, keychain, envelope, now = Date.now()) {
   if (!v.ok) return { verdict: "dropped", reason: `invalid-envelope:${v.reason}`, sends: [] };
   const payload = decrypt(keychain, envelope);
   return judgeReceived(receiver, { sender: envelope.sender, transportKey: envelope.transportSignature.publicKey, payload, delegation: envelope.delegation }, now);
+}
+
+/**
+ * The public way to get the receiver judgeEnvelope / judgeReceived need, with no deep import: the groups-v2 receiver
+ * for an Agent Commons home, as this identity (its uuaid and public key), over that home's own space store.
+ */
+export function createGroupReceiver({ home, keychain }) {
+  const id = keychain?._identity;
+  if (!id?.uuaid || !id?.publicKeyHex) fail("NO_IDENTITY", "createGroupReceiver needs a loaded keychain");
+  if (typeof home !== "string" || !home) fail("HOME", "createGroupReceiver needs the Agent Commons home directory");
+  return new GroupReceiver({ self: { uuaid: id.uuaid, key: id.publicKeyHex }, store: new RosterStore(home), mailbox: null });
 }
 
 /** Same contract for a message the Agent Commons runtime already verified, admitted and decrypted. */
@@ -74,18 +88,33 @@ export class SpaceDriver {
 
   /**
    * Outbound admission (RedTeam PR7-1): the transport itself does not check recipients, so the driver does. A space
-   * sends only to an agent admitted here under exactly the key used, with commons:message, and not blocked. The one
-   * exception is `inviteeOf`: manifests to a member that the group's own signed chain lists as INVITED under that key,
-   * so an admin can seat a stranger it named; that recipient still cannot speak until the admin admits it.
+   * sends only to an agent admitted here under exactly the key used, with commons:message, and not blocked (COND-B:
+   * policy.blocked is checked on every send, under any spelling of the key, so a stale admission of a since-blocked key
+   * never passes). The one exception is `inviteeOf`: manifests to a member that the group's own signed chain lists as
+   * INVITED under that key, so an admin can seat a stranger it named; that recipient still cannot speak until the
+   * admin admits it. COND-A: the exception holds only for a chain this home authored, or whose genesis admin is itself
+   * admitted here under its chain key. A chain stored from elsewhere (for example by recovery from a member) never
+   * lets this home reach a key that chain's foreign admin invited.
    */
   assertOutbound(to, key, { inviteeOf = null } = {}) {
-    const agent = this.runtime.policy.agents?.[to];
+    const policy = this.runtime.policy;
+    if (keyIsBlocked(policy.blocked, to)) fail("RECIPIENT_BLOCKED", `${to} is blocked here (under this or another spelling of its key)`);
+    const agent = policy.agents?.[to];
     if (agent && agent.kind === "agent" && agent.publicKey === key && agent.capabilities?.includes("commons:message")) return "admitted";
-    if (inviteeOf) {
+    if (inviteeOf && this.chainAuthorized(inviteeOf)) {
       const row = head(inviteeOf).members.find((r) => r.uuaid === to);
       if (row && row.status === "invited" && row.key === key) return "invitee";
     }
     fail("RECIPIENT_NOT_ADMITTED", `${to} is not admitted here under that key; admit it first (agent-commons admit)`);
+  }
+
+  /** COND-A: a chain whose genesis admin is this home's own identity, or an agent admitted (and not blocked) here under that key. */
+  chainAuthorized(rec) {
+    const admin = rec?.chain?.length ? adminOf(rec.chain[0]) : null;
+    if (!admin) return false;
+    if (admin.uuaid === this.self.uuaid && admin.key === this.self.key) return true;
+    const policy = this.runtime.policy, agent = policy.agents?.[admin.uuaid];
+    return Boolean(agent && agent.kind === "agent" && agent.publicKey === admin.key && !keyIsBlocked(policy.blocked, admin.uuaid));
   }
 
   async deliver(to, key, payload, kind = "message", { inviteeOf = null } = {}) {
@@ -122,7 +151,7 @@ export class SpaceDriver {
       try {
         results.push({ op: s.op, ...(await this.deliver(s.to, s.key ?? this.keyFor(rec, s.to), { _group: tag }, "message", { inviteeOf })) });
       } catch (error) {
-        if (error?.code !== "RECIPIENT_NOT_ADMITTED") throw error;
+        if (!OUTBOUND_REFUSALS.has(error?.code)) throw error;
         results.push({ to: s.to, op: s.op, accepted: false, error: error.code });
       }
     }
@@ -191,7 +220,7 @@ export class SpaceDriver {
     const sent = [];
     for (const u of to) {
       try { sent.push(await this.deliver(u, this.keyFor(rec, u), { ...payload, text, _group: tag })); }
-      catch (error) { if (error?.code !== "RECIPIENT_NOT_ADMITTED") throw error; sent.push({ to: u, accepted: false, error: error.code }); }
+      catch (error) { if (!OUTBOUND_REFUSALS.has(error?.code)) throw error; sent.push({ to: u, accepted: false, error: error.code }); }
     }
     return { space, msgId: tag.msgId, sent };
   }

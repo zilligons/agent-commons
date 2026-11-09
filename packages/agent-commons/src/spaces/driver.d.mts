@@ -2,7 +2,8 @@
 
 export type SpaceDriverErrorCode =
   | "NO_IDENTITY" | "MEMBER" | "MEMBER_KEY" | "SPACE" | "SPACE_UNKNOWN" | "RECIPIENT_NOT_ADMITTED" | "NO_CARRIER"
-  | "NAME" | "NOT_INVITED" | "SIGNAL" | "SIGNAL_UNKNOWN" | "AMBIGUOUS" | "TEXT" | "NOT_ACTIVE" | "FAN_OUT";
+  | "NAME" | "NOT_INVITED" | "SIGNAL" | "SIGNAL_UNKNOWN" | "AMBIGUOUS" | "TEXT" | "NOT_ACTIVE" | "FAN_OUT"
+  | "RECIPIENT_BLOCKED" | "HOME";
 
 export declare class SpaceDriverError extends Error {
   code: SpaceDriverErrorCode;
@@ -23,6 +24,9 @@ export interface GroupJudgement {
 
 /** The engine's receiver (GroupReceiver from the vendored Pillar groups-v2). */
 export interface GroupReceiverLike { receive(envelope: unknown, now: number): object }
+
+/** The receiver judgeEnvelope / judgeReceived need, for an Agent Commons home, as that home's identity. No deep import. */
+export declare function createGroupReceiver(options: { home: string; keychain: { _identity: { uuaid: string; publicKeyHex: string } | null } }): GroupReceiverLike;
 
 /** The supported group-receive path for a raw Pillar envelope: verify, decrypt, attach and judge. */
 export declare function judgeEnvelope(receiver: GroupReceiverLike, keychain: unknown, envelope: object, now?: number): GroupJudgement;
@@ -51,10 +55,13 @@ export declare class SpaceDriver {
   /** "uuaid" (an admitted agent; its pinned key is used) or "uuaid:<64 hex key>". */
   memberRef(spec: string): MemberRef;
   /**
-   * Outbound admission: refuses (RECIPIENT_NOT_ADMITTED) any recipient not admitted here under exactly `key` with
-   * commons:message, except a manifest to a member the space's signed chain lists as invited under that key.
+   * Outbound admission: refuses a blocked recipient (RECIPIENT_BLOCKED), and any recipient not admitted here under
+   * exactly `key` with commons:message (RECIPIENT_NOT_ADMITTED), except a manifest to a member the space's signed
+   * chain lists as invited under that key, when that chain was authored here or by an admin admitted here.
    */
   assertOutbound(to: string, key: string, options?: { inviteeOf?: object | null }): "admitted" | "invitee";
+  /** True when the chain's genesis admin is this identity, or admitted (and not blocked) here under its chain key. */
+  chainAuthorized(rec: object): boolean;
   deliver(to: string, key: string, payload: object, kind?: string, options?: { inviteeOf?: object | null }): Promise<SendResult>;
   create(options: { name: string; purpose?: string; members?: string[] }): Promise<{ space: string; version: number; invited: string[]; sent: SendResult[] }>;
   invite(options: { space: string; member: string }): Promise<{ space: string; version: number; invited: string; sent: SendResult[] }>;

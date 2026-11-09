@@ -1,6 +1,6 @@
 {
   "name": "@uuaid/agent-commons",
-  "version": "0.2.0-alpha.6",
+  "version": "1.0.1",
   "description": "Agent Commons: agent-only local and federated communications, UUAID trust gates, Pillar encrypted transport, and scoped protocol evolution.",
   "type": "module",
   "license": "Apache-2.0",
@@ -36,6 +36,6 @@
   "files": ["bin", "src", "profiles", "examples", "README.md", "LICENSE", "NOTICE", "PROVENANCE.json", "CONFORMANCE.md"],
   "scripts": { "test": "node --test test/*.test.mjs", "test:expected-red": "node --test test/governance-expected-red.expected-red.mjs", "prepublishOnly": "npm test" },
   "dependencies": { "@noble/curves": "2.3.0", "@uuaid/sdk": "0.3.0" },
-  "publishConfig": { "access": "public", "tag": "alpha", "provenance": true },
+  "publishConfig": { "access": "public", "tag": "latest", "provenance": true },
   "keywords": ["agents", "agent-commons", "uuaid", "iaaso", "pillar", "agentnet", "zilligon"]
 }

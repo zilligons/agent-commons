@@ -30,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Exact immutable npm version. Must already match packages/agent-commons/package.json and annotated tag v<version>. This is not a version bump. Example: 0.2.0-alpha.1'
+        description: 'Exact immutable npm version. Must already match packages/agent-commons/package.json and annotated tag v<version>. This is not a version bump. Examples: 1.0.1 (dist-tag latest) or 0.2.0-alpha.7 (dist-tag alpha)'
         required: true
         type: string
       npm_trusted_publisher:
@@ -56,7 +56,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Require main workflow ref, public repo, and alpha version
+      - name: Require main workflow ref, public repo, and release version
         id: version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -82,8 +82,8 @@ jobs:
           fi
           node <<'JS'
           const version = process.env.RELEASE_VERSION || "";
-          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(version)) {
-            console.error("version rejected: expected explicit X.Y.Z-alpha.N with no v prefix, range, latest, or other prerelease");
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.(0|[1-9][0-9]*))?$/.test(version)) {
+            console.error("version rejected: expected explicit X.Y.Z (dist-tag latest) or X.Y.Z-alpha.N (dist-tag alpha) with no v prefix, range, latest, or other prerelease");
             process.exit(1);
           }
           JS
@@ -123,8 +123,8 @@ jobs:
             process.exit(1);
           }
           const version = process.env.RELEASE_VERSION || "";
-          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(version)) {
-            console.error("guard output failed alpha validation");
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.(0|[1-9][0-9]*))?$/.test(version)) {
+            console.error("guard output failed release version validation");
             process.exit(1);
           }
           console.log("credential environment: absent");
@@ -192,8 +192,10 @@ jobs:
           if (pkg.private === true) throw new Error("package is private");
           if (lock.version !== version || lock.packages?.[""]?.version !== version) throw new Error("lockfile version mismatch");
           const publish = pkg.publishConfig || {};
-          if (publish.access !== "public" || publish.tag !== "alpha" || publish.provenance !== true) {
-            throw new Error("publishConfig must be access public, tag alpha, provenance true");
+          // The dist-tag is derived from the version, never an input: X.Y.Z-alpha.N -> alpha, X.Y.Z -> latest.
+          const distTag = version.includes("-alpha.") ? "alpha" : "latest";
+          if (publish.access !== "public" || publish.tag !== distTag || publish.provenance !== true) {
+            throw new Error("publishConfig must be access public, tag " + distTag + " (derived from the version), provenance true");
           }
           if (publish.registry && publish.registry !== "https://registry.npmjs.org/") {
             throw new Error("unexpected publishConfig.registry");
@@ -292,7 +294,7 @@ jobs:
           if (!String(init.home).startsWith(process.env.RUNNER_TEMP + path.sep)) throw new Error("init home escaped runner temp");
           const doctor = JSON.parse(execFileSync(process.execPath, [cli, "doctor", "--home", home], {cwd: consumer, encoding: "utf8"}));
           if (doctor.target !== "zilligon.com" || doctor.packageRelease !== version) {
-            throw new Error("doctor evidence does not match the dispatched alpha version");
+            throw new Error("doctor evidence does not match the dispatched version");
           }
           const help = execFileSync(process.execPath, [cli, "help"], {cwd: consumer, encoding: "utf8"});
           if (!help.includes("cohort-init")) throw new Error("packed CLI help lacks cohort-init");
@@ -357,7 +359,7 @@ jobs:
           exit 1
 
   publish:
-    name: Publish public alpha with provenance
+    name: Publish public release with provenance
     needs: [guard, verify]
     if: inputs.npm_trusted_publisher == true
     runs-on: ubuntu-24.04
@@ -403,7 +405,7 @@ jobs:
           }
           if (!/^[0-9a-f]{64}$/.test(process.env.EXPECTED_PACK_SHA256 || "")) process.exit(1);
           if (!/^[0-9a-f]{40}$/.test(process.env.EXPECTED_SOURCE_SHA || "")) process.exit(1);
-          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.(0|[1-9][0-9]*)$/.test(process.env.RELEASE_VERSION || "")) process.exit(1);
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.(0|[1-9][0-9]*))?$/.test(process.env.RELEASE_VERSION || "")) process.exit(1);
           console.log("credential environment: absent");
           console.log("id-token scope: publish job only");
           JS
@@ -467,7 +469,8 @@ jobs:
           ]);
           if (pkg.name !== "@uuaid/agent-commons" || pkg.version !== version) process.exit(1);
           const publish = pkg.publishConfig || {};
-          if (publish.access !== "public" || publish.tag !== "alpha" || publish.provenance !== true) process.exit(1);
+          const distTag = version.includes("-alpha.") ? "alpha" : "latest";
+          if (publish.access !== "public" || publish.tag !== distTag || publish.provenance !== true) process.exit(1);
           const repo = pkg.repository;
           if (!repo || typeof repo !== "object" || !allowedUrls.has(repo.url) || repo.directory !== "packages/agent-commons") {
             console.error("refusing publish: repository metadata cannot satisfy provenance");
@@ -481,9 +484,14 @@ jobs:
             echo "refusing: pack digest does not match the verified cold-install pack"
             exit 1
           fi
-          npm publish --ignore-scripts --provenance --access public --tag alpha --registry https://registry.npmjs.org/
+          # Derived from the version, never an input: X.Y.Z-alpha.N publishes to alpha, X.Y.Z to latest.
+          case "$RELEASE_VERSION" in
+            *-alpha.*) DIST_TAG=alpha ;;
+            *) DIST_TAG=latest ;;
+          esac
+          npm publish --ignore-scripts --provenance --access public --tag "$DIST_TAG" --registry https://registry.npmjs.org/
           if [ -f .npmrc ] || [ -f "$GITHUB_WORKSPACE/.npmrc" ]; then
             echo "publish wrote an .npmrc; revoke any exposed credential and inspect the run"
             exit 1
           fi
-          echo "publish command finished for ${RELEASE_VERSION} on dist-tag alpha"
+          echo "publish command finished for ${RELEASE_VERSION} on dist-tag ${DIST_TAG}"

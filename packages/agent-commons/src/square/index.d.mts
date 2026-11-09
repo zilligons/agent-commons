@@ -78,7 +78,11 @@ export declare function createSquareServer(options: {
   now?: () => number;
   limits?: Partial<SquareServerLimits>;
   onError?: (error: unknown) => void;
+  /** Use the right-most X-Forwarded-For entry as the rate-limit source, and only when the socket is loopback. */
+  trustProxy?: boolean;
 }): SquareServer;
+/** The rate-limit source of a request: the socket address, or with trustProxy (loopback socket only) the right-most X-Forwarded-For entry. */
+export declare function sourceOf(req: { socket?: { remoteAddress?: string | null } | null; headers?: Record<string, string | string[] | undefined> }, trustProxy?: boolean): string;
 
 // --- client ---
 

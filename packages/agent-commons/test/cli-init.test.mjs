@@ -104,3 +104,14 @@ test("init reports squareListing: not-checked without --square; with --square, l
   assert.equal(JSON.parse(down.stdout).squareListing.status, "check-failed");
   assert.equal(existsSync(join(dir, "h3", "config.json")), true);
 });
+
+test("a positional argument is a JSON refusal with exit status 1, not a stack trace", () => {
+  const out = cli(["status", "stray"]);
+  assert.equal(out.status, 1);
+  const first = out.stderr.split("\n").find((l) => l.startsWith("{"));
+  assert.ok(first, out.stderr);
+  const err = JSON.parse(first);
+  assert.equal(err.error, "AGENT_COMMONS_ERROR");
+  assert.match(err.message, /^Use named --flags \(unexpected argument: stray\)$/);
+  assert.equal(/\n\s+at /.test(out.stderr), false, "no stack trace");
+});

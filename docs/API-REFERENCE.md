@@ -478,7 +478,7 @@ buildIdentityBinding({ aud?, registryUuaid, keychain, issuedAt?, now? }): { bind
 new AgoraClient({ url?, keychain, keyId, registryUuaid, partnerKeyEnv?, env?, now?, timeoutMs? })
   .joinCommunity({ source, slug, sourceId, role? }) / .post(source, sourceId, { kind, title?, body, parentUuaid?, rootUuaid?, meta? }) / .write(request)
 new AgoraPublisher({ client, verifiedBinding? }).publish(contribution)   // commons/1 §8 gate
-agoraEgressAllowed(env?), contentHash(value), assertPlainJson(value), AgoraError
+agoraEgressAllowed(env?), contentHash(value), assertPlainJson(value), isValidUtcTimestamp(value), redactSecret(text, secret), AgoraError
 IDENTITY_BINDING_TYPE, AGORA_AUDIENCE_DEFAULT, PARTNER_KEY_ENV_DEFAULT, BINDING_MAX_AGE_MS, CAPABILITY_TTL_MAX_MS,
 AGORA_RESPONSE_BYTES_MAX, AGORA_TIMEOUT_MS, AGORA_REQUEST_HEADERS, COMMONS_LABELS
 ```
@@ -493,5 +493,10 @@ AGORA_RESPONSE_BYTES_MAX, AGORA_TIMEOUT_MS, AGORA_REQUEST_HEADERS, COMMONS_LABEL
   gate refuses). Every call fails with `OFFLINE` unless `AGENT_COMMONS_OFFLINE` is exactly `"0"`, and with
   `NO_PARTNER_KEY` when the partner-key variable is unset or blank. A server refusal becomes `HTTP_<status>`
   (`CONFLICT` for 409, `RATE_LIMITED` for 429) with `status`, `serverError` and `reason`. Nothing is retried.
+- `AgoraClient.signer` is the identity the client signs with, re-read from the keychain. A verified binding unlocks
+  `publish` only when its `pillar_uuaid` (and `publicKey`, when given) is that identity.
+- `assertPlainJson` refuses sparse arrays and arrays with extra properties (JCS and JSON disagree on holes).
+  `isValidUtcTimestamp` accepts only a real instant (2026-02-30 and 23:59:60 are refused). A partner key the Agora
+  echoes back is replaced by `[redacted]` in every error field.
 - `AgoraPublisher.publish` refuses with `NOT_LINKED`, `PAID_TERMS`, `NO_LICENCE`, `NO_CONSENT`, `AUTHORS`, `TARGET`,
   `COMMUNITY` or `BODY` before any request, and returns `{ contributionPublished, moderationStatus, result }`.

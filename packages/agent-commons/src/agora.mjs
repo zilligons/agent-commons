@@ -34,6 +34,15 @@ export const COMMONS_LABELS = Object.freeze({ source: "agent-commons", registere
 const SELF_CERTIFYING = /^uuaid:(foundation|pillar|agentnet):agent:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const AGENT_UUAID = /^uuaid:[a-z][a-z0-9-]{0,30}[a-z0-9]:agent:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+/** V1 F4: shape AND a real instant that round-trips (2026-99-99T99:99:99Z has the shape but parses to NaN). */
+export function isValidUtcTimestamp(value) {
+  if (typeof value !== "string" || !ISO.test(value)) return false;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return false;
+  const iso = new Date(t).toISOString(); // YYYY-MM-DDTHH:MM:SS.sssZ
+  const [date, time] = value.slice(0, -1).split("T"); const [hms, frac = ""] = time.split(".");
+  return iso.slice(0, 10) === date && iso.slice(11, 19) === hms && iso.slice(20, 23) === (frac + "000").slice(0, 3);
+}
 
 export class AgoraError extends Error {
   constructor(code, message, extra = {}) { super(message); this.name = "AgoraError"; this.code = code; Object.assign(this, extra); }
@@ -49,7 +58,13 @@ export function assertPlainJson(value, path = "payload", depth = 0) {
   if (depth > 32) fail("NOT_JSON", `${path}: nested too deeply`);
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") { if (!Number.isSafeInteger(value)) fail("NOT_JSON", `${path}: only safe integers (use a decimal string)`); return; }
-  if (Array.isArray(value)) { value.forEach((v, i) => assertPlainJson(v, `${path}[${i}]`, depth + 1)); return; }
+  if (Array.isArray(value)) {
+    // V1 F2: forEach skips holes, and a hole is [] to JCS but [null] to JSON.stringify, so the signed bytes would not be
+    // the bytes sent. Walk every index, and refuse a hole or a non-index property.
+    if (Object.keys(value).length !== value.length) fail("NOT_JSON", `${path}: a sparse array or an array with extra properties`);
+    for (let i = 0; i < value.length; i++) { if (!Object.prototype.hasOwnProperty.call(value, i)) fail("NOT_JSON", `${path}[${i}]: a hole in a sparse array`); assertPlainJson(value[i], `${path}[${i}]`, depth + 1); }
+    return;
+  }
   if (typeof value === "object") {
     const proto = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) fail("NOT_JSON", `${path}: only plain objects`);
@@ -98,14 +113,23 @@ export function buildIdentityBinding({ aud = AGORA_AUDIENCE_DEFAULT, registryUua
   if (typeof registryUuaid !== "string" || registryUuaid.length > 128 || !AGENT_UUAID.test(registryUuaid)) fail("REGISTRY_UUAID", "registryUuaid must be the partner-minted registry agent uuaid");
   const { uuaid, publicKey } = loadedIdentity(keychain);
   if (registryUuaid === uuaid) fail("REGISTRY_UUAID", "the registry agent and the key-derived address must differ");
-  const at = issuedAt ?? new Date(now()).toISOString();
-  if (typeof at !== "string" || !ISO.test(at)) fail("ISSUED_AT", "issuedAt is an RFC 3339 UTC timestamp");
-  const age = now() - Date.parse(at);
+  const clock = now(); // read once, and checked BEFORE it is used: new Date(NaN).toISOString() throws a RangeError
+  if (!Number.isFinite(clock)) fail("ISSUED_AT", "the clock returned a non-finite time");
+  const at = issuedAt ?? new Date(clock).toISOString();
+  if (!isValidUtcTimestamp(at)) fail("ISSUED_AT", "issuedAt is a valid RFC 3339 UTC timestamp"); // V1 F4
+  const age = clock - Date.parse(at);
+  if (!Number.isFinite(age)) fail("ISSUED_AT", "issuedAt is not a finite time");
   if (age > BINDING_MAX_AGE_MS) fail("STALE_BINDING", `issuedAt is older than ${BINDING_MAX_AGE_MS / 1000} s; build a fresh binding`); // [RT-3]
   if (age < -30_000) fail("ISSUED_AT", "issuedAt is in the future");
   const binding = { type: IDENTITY_BINDING_TYPE, aud, registry_uuaid: registryUuaid, pillar_uuaid: uuaid, publicKey, issuedAt: at };
   const signature = Buffer.from(keychain.sign(Buffer.from(`${IDENTITY_BINDING_TYPE}\n${jcs(binding)}`, "utf8"))).toString("hex");
   return { binding, signature };
+}
+
+/** Replace every occurrence of `secret` in `text`. Empty or short secrets are never matched (nothing to leak). */
+export function redactSecret(text, secret) {
+  if (typeof secret !== "string" || secret.length < 8) return text;
+  return text.split(secret).join("[redacted]");
 }
 
 /** [RT-2] Egress is allowed ONLY when AGENT_COMMONS_OFFLINE is exactly "0", independent of any policy. */
@@ -170,6 +194,8 @@ export class AgoraClient {
     this.#keychain = keychain; this.#keyId = keyId; this.#registryUuaid = registryUuaid; this.#partnerKeyEnv = partnerKeyEnv; this.#env = env; this.#now = now; this.#timeoutMs = timeoutMs;
   }
   get registryUuaid() { return this.#registryUuaid; }
+  /** The identity this client signs with (re-read from the keychain, never cached). */
+  get signer() { return loadedIdentity(this.#keychain); }
 
   async #call(method, path, body, extraHeaders = {}) {
     if (!agoraEgressAllowed(this.#env)) fail("OFFLINE", "offline: set AGENT_COMMONS_OFFLINE=0 to reach the Agora"); // [RT-2]
@@ -182,8 +208,11 @@ export class AgoraClient {
     let json = null;
     if (text.length) { try { json = JSON.parse(text); } catch { fail("NOT_JSON", `the Agora answered ${res.status} with a body that is not JSON`, { status: res.status }); } }
     if (res.status < 200 || res.status >= 300) {
-      const serverError = json && typeof json.error === "string" ? json.error.slice(0, 300) : `HTTP ${res.status}`;
-      fail(res.status === 409 ? "CONFLICT" : res.status === 429 ? "RATE_LIMITED" : `HTTP_${res.status}`, serverError, { status: res.status, serverError, ...(json && typeof json.reason === "string" ? { reason: json.reason } : {}) });
+      // V1 F3: a server can echo request material back. Redact the partner key (and its Bearer form) from anything
+      // copied into the error, so it never reaches message, serverError, reason or stack.
+      const clean = (v) => redactSecret(String(v), key).slice(0, 300);
+      const serverError = json && typeof json.error === "string" ? clean(json.error) : `HTTP ${res.status}`;
+      fail(res.status === 409 ? "CONFLICT" : res.status === 429 ? "RATE_LIMITED" : `HTTP_${res.status}`, serverError, { status: res.status, serverError, ...(json && typeof json.reason === "string" ? { reason: clean(json.reason) } : {}) });
     }
     return json;
   }
@@ -247,10 +276,13 @@ export class AgoraPublisher {
     this.#client = client;
     this.#linked = verifiedBinding ?? null;
   }
-  static checkContribution(c, linked, registryUuaid) {
+  static checkContribution(c, linked, registryUuaid, signerUuaid, signerKey) {
+    if (typeof signerUuaid !== "string" || typeof signerKey !== "string") fail("CLIENT", "the client's own signing identity is required");
     if (!c || typeof c !== "object") fail("CONTRIBUTION", "a contribution object is required");
     if (c.target !== "agora") fail("TARGET", "only target \"agora\" is published here; other targets are shown as text and never acted on");
     if (!linked || !["bound", "updated", "unchanged"].includes(linked.status) || linked.registry_uuaid !== registryUuaid || typeof linked.pillar_uuaid !== "string") fail("NOT_LINKED", "target agora stays inert until a principal is linked: submit the identity binding and pass the verified result");
+    // V1 F1: the binding must link THIS client's own key, not any key-derived address.
+    if (linked.pillar_uuaid !== signerUuaid || (linked.publicKey !== undefined && String(linked.publicKey).toLowerCase() !== signerKey)) fail("NOT_LINKED", "the verified binding is for a different key than this client signs with");
     if (c.terms !== "free") fail("PAID_TERMS", "only free contributions go to the Agora in this version (commons/1 §8)");
     if (typeof c.licence !== "string" || !c.licence.trim()) fail("NO_LICENCE", "a licence is required");
     if (c.requesterConsent !== true) fail("NO_CONSENT", "the requester's explicit consent is required");
@@ -260,7 +292,8 @@ export class AgoraPublisher {
     if (typeof c.body !== "string" || !c.body.length) fail("BODY", "body is required");
   }
   async publish(c) {
-    AgoraPublisher.checkContribution(c, this.#linked, this.#client.registryUuaid);
+    const signer = this.#client.signer; // V1 F1: the key that will actually sign, read from the client's keychain
+    AgoraPublisher.checkContribution(c, this.#linked, this.#client.registryUuaid, signer.uuaid, signer.publicKey);
     const included = c.authors.filter((a) => a.omitted !== true).map((a) => a.uuaid);
     const r = await this.#client.post(c.community.source, c.community.sourceId, { kind: c.kind ?? "post", title: c.title ?? null, body: c.body,
       meta: { licence: c.licence, terms: "free", authors: included } });

@@ -50,6 +50,10 @@ export declare function contentHash(value: unknown): string;
 export declare function sealUuaidEnvelope<T extends Record<string, unknown>>(payload: T, keychain: AgoraKeychain, keyId: string, options?: { now?: () => Date }): UuaidEnvelope<T>;
 /** The signed uuaid.identity.binding.v1 for POST /agents/bindings. Refuses an issuedAt older than 60 s. */
 export declare function buildIdentityBinding(options: { aud?: string; registryUuaid: string; keychain: AgoraKeychain; issuedAt?: string; now?: () => number }): SignedIdentityBinding;
+/** True only for a real RFC 3339 UTC instant that round-trips (shape AND a valid date and time). */
+export declare function isValidUtcTimestamp(value: unknown): boolean;
+/** Replaces every occurrence of `secret` in `text` with "[redacted]"; secrets shorter than 8 characters are not matched. */
+export declare function redactSecret(text: string, secret: string): string;
 /** True only when AGENT_COMMONS_OFFLINE is exactly "0". */
 export declare function agoraEgressAllowed(env?: Record<string, string | undefined>): boolean;
 
@@ -74,13 +78,15 @@ export interface AgoraClientOptions {
 export declare class AgoraClient {
   constructor(options: AgoraClientOptions);
   readonly registryUuaid: string;
+  /** The identity this client signs with, re-read from the keychain. */
+  readonly signer: { uuaid: string; publicKey: string };
   write<R = unknown>(request: { method?: string; path: string; action: string; audience: "community" | "group" | "profile"; target: string; fields?: Record<string, unknown> }): Promise<AgoraWriteResult<R>>;
   joinCommunity(community: { source: string; slug: string; sourceId: string; role?: string }): Promise<AgoraWriteResult>;
   post(source: string, sourceId: string, entry: { kind: "thought" | "musing" | "post" | "reply"; title?: string | null; body: string; parentUuaid?: string | null; rootUuaid?: string | null; meta?: Record<string, unknown> }): Promise<AgoraWriteResult<AgoraPostResult>>;
 }
 
-/** The server's per-item result for this key's binding (POST /agents/bindings). */
-export interface VerifiedBinding { status: "bound" | "updated" | "unchanged"; registry_uuaid: string; pillar_uuaid: string }
+/** The server's per-item result for this key's binding. It must name THIS client's own address (and key, when given). */
+export interface VerifiedBinding { status: "bound" | "updated" | "unchanged"; registry_uuaid: string; pillar_uuaid: string; publicKey?: string }
 
 export interface AgoraContribution {
   target: "agora";
@@ -97,7 +103,7 @@ export interface AgoraContribution {
 
 export declare class AgoraPublisher {
   constructor(options: { client: AgoraClient; verifiedBinding?: VerifiedBinding | null });
-  static checkContribution(contribution: unknown, linked: VerifiedBinding | null, registryUuaid: string): void;
+  static checkContribution(contribution: unknown, linked: VerifiedBinding | null, registryUuaid: string, signerUuaid: string, signerKey: string): void;
   /** Refuses before any network call unless commons/1 §8 holds; returns the contribution.published object for the space engine to send. */
   publish(contribution: AgoraContribution): Promise<{
     contributionPublished: { type: "contribution.published"; body: { target: "agora"; targetId: string | null; contentHash: string; licence: string } };

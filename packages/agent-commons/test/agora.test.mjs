@@ -215,3 +215,44 @@ test("a 403 'active agent credential required' is surfaced verbatim, never claim
   const err = await client(k, `http://127.0.0.1:${server.address().port}`).post("agentnet", "42", { kind: "post", body: "x" }).catch((e) => e);
   assert.equal(err.code, "HTTP_403"); assert.equal(err.serverError, "active agent credential required"); assert.equal(err.reason, "unverified_origin");
 });
+
+// ---- V1 findings at 2295ac0 (fm-20261109T090125-350bd3): one regression test each ----
+
+test("V1-F1: a verified binding for a DIFFERENT key never unlocks publish, and nothing reaches the network", async (t) => {
+  const k = key(); const stub = await stubAgora(t, { keychain: k });
+  const otherKey = Keychain.generate({ uuaidNamespace: "agentnet" });
+  const ok = { target: "agora", terms: "free", licence: "CC-BY-4.0", requesterConsent: true, authors: [], community: { source: "agentnet", sourceId: "42" }, body: "b" };
+  await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: otherKey.uuaid } }).publish(ok), code("NOT_LINKED"));
+  await assert.rejects(new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: k._identity.uuaid, publicKey: otherKey.publicKeyHex } }).publish(ok), code("NOT_LINKED"));
+  assert.equal(stub.seen.length, 0, "zero network calls for a wrong-key binding");
+  const own = await new AgoraPublisher({ client: client(k, stub.url), verifiedBinding: { status: "bound", registry_uuaid: REG, pillar_uuaid: k._identity.uuaid, publicKey: k._identity.publicKeyHex } }).publish(ok);
+  assert.equal(own.contributionPublished.type, "contribution.published", "positive control: this key's own binding publishes");
+});
+
+test("V1-F2: a sparse array (or an array with extra properties) is refused before signing", () => {
+  const k = key(); let signed = 0; const spy = { _identity: k._identity, sign: (b) => { signed++; return k.sign(b); } };
+  const extra = [1]; extra.note = "x";
+  for (const bad of [{ items: new Array(1) }, { items: [1, , 3] }, { items: extra }]) assert.throws(() => sealUuaidEnvelope(bad, spy, "ac-k1"), code("NOT_JSON"));
+  assert.equal(signed, 0, "nothing signed");
+  const dense = sealUuaidEnvelope({ items: [null] }, k, "ac-k1");
+  assert.equal(jcs(dense.payload), JSON.stringify(dense.payload), "positive control: the signed JCS bytes equal the bytes sent");
+});
+
+test("V1-F3: a server that echoes the partner key never gets it into message, serverError, reason or stack", async (t) => {
+  const k = key();
+  const server = createServer(async (req, res) => { for await (const _ of req); res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: `rejected ${req.headers.authorization}`, reason: `echo ${PARTNER}` })); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r)); t.after(() => server.close());
+  const err = await client(k, `http://127.0.0.1:${server.address().port}`).joinCommunity({ source: "a", slug: "b", sourceId: "c" }).catch((e) => e);
+  for (const field of ["message", "serverError", "reason", "stack"]) assert.equal(String(err[field]).includes(PARTNER), false, `${field} carries the partner key`);
+  assert.equal(err.serverError, "rejected Bearer [redacted]"); assert.equal(err.reason, "echo [redacted]");
+});
+
+test("V1-F4: a regex-shaped but impossible issuedAt is refused before signing; a real one signs", () => {
+  const k = key(); let signed = 0; const spy = { _identity: k._identity, sign: (b) => { signed++; return k.sign(b); } };
+  for (const bad of ["2026-99-99T99:99:99Z", "2026-02-30T00:00:00Z", "2026-11-09T24:00:00Z", "2026-11-09T23:59:60Z"]) {
+    assert.throws(() => buildIdentityBinding({ registryUuaid: REG, keychain: spy, issuedAt: bad }), code("ISSUED_AT"), bad);
+  }
+  assert.throws(() => buildIdentityBinding({ registryUuaid: REG, keychain: spy, now: () => NaN }), code("ISSUED_AT"), "a NaN clock");
+  assert.equal(signed, 0, "nothing signed");
+  assert.doesNotThrow(() => buildIdentityBinding({ registryUuaid: REG, keychain: k }), "positive control: now() signs");
+});

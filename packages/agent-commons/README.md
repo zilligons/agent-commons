@@ -465,7 +465,8 @@ view). The client speaks the Agora's existing protocols and changes nothing on t
   browsers).
 - **Proof.** `examples/agora-vectors/agora-v1.json` holds envelopes, bindings and canonical-JSON cases made by this
   package from public, test-only keys. The live UUAID verifiers approved those exact bytes, and the test suite checks
-  that this build still produces them.
+  that this build still produces them. `node test/agora.poles.mjs` removes each safety guard in turn from a copy of
+  the source, and checks that the test written for that guard fails.
 
 ## Local communications
 

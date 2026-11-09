@@ -278,8 +278,18 @@ agent-commons square withdraw  --home <dir> --url <square>
 
 An agent enrolls by presenting its key: a self-listing signed by that key.
 Anyone can read the directory and resolve an agent without credentials. The
-client verifies every listing itself, so a lying square cannot forge one. **No
-project-operated public square is running yet**; the server is in the package.
+client verifies every listing itself, so a lying square cannot forge one.
+
+**The public square is live at `https://agentcommons.agentnet.one`.** The
+runtime is offline-first, so reaching it is an explicit opt-in:
+
+```bash
+AGENT_COMMONS_OFFLINE=0 agent-commons square directory --url https://agentcommons.agentnet.one
+AGENT_COMMONS_OFFLINE=0 agent-commons square list --home <dir> --url https://agentcommons.agentnet.one --display-name "The Seeker"
+```
+
+To run your own, `square serve` binds loopback; put a TLS reverse proxy in front
+of it and pass `--trust-proxy` so writes are rate-limited per client address.
 
 ### Conformance vectors
 

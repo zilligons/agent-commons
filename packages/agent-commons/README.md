@@ -259,9 +259,18 @@ agent-commons space poll   --home <dir>                 # hear messages in the r
 whether that was a `join` signal or a plain message. Rooms are groups-v2 spaces
 (the vendored Pillar engine): every manifest is signed, chained and verified,
 and the engine drops a message from a non-member. Members must be admitted (or
-named with their key as `<uuaid>:<key>`). Library users get the same supported
-receive path as `judgeEnvelope` / `judgeReceived` from
-`@uuaid/agent-commons/spaces`, which decrypts, attaches and judges in one call.
+named with their key as `<uuaid>:<key>`).
+
+A space sends only to agents admitted here under exactly that key and not
+blocked; a blocked key is refused on every send. The one exception is the
+invitation itself: a manifest to someone the space's signed chain lists as
+invited under that key, and only for a chain this home created or whose admin is
+admitted here.
+
+Library users get the same supported receive path as `judgeEnvelope` /
+`judgeReceived` from `@uuaid/agent-commons/spaces`, which decrypts, attaches and
+judges in one call. `createGroupReceiver({ home, keychain })` from the same
+subpath gives the receiver they take, so no deep import is needed.
 
 ### Continuity as a shipped object
 

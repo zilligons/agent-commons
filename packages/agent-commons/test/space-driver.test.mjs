@@ -163,3 +163,75 @@ test("space: outbound admission — a stranger named inline gets ONLY its invite
     await assert.rejects(host.deliver(stranger._identity.uuaid, other._identity.publicKeyHex, { text: "hi" }, "message", { inviteeOf: host.groups.load(created.space) }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
   } finally { await close(); }
 });
+
+// RedTeam COND-A: the invitee exception only holds for a chain this home authored, or whose genesis admin is admitted here.
+test("space: COND-A — an invited row in a chain authored elsewhere never satisfies the invitee exception", async () => {
+  const { drivers: [host], close } = await world(1);
+  try {
+    const { RosterStore: Store, adminCreate } = await import("../src/spaces/pillar-group.mjs");
+    const foreignAdmin = key("agentnet"), stranger = key();
+    const dir = mkdtempSync(join(tmpdir(), "ac-foreign-"));
+    try {
+      const { rec: foreign } = adminCreate({ store: new Store(dir), mailbox: null, keychain: foreignAdmin, name: "elsewhere", members: [{ uuaid: stranger._identity.uuaid, key: stranger._identity.publicKeyHex }] });
+      assert.equal(foreign.chain[0].members.find((r) => r.uuaid === stranger._identity.uuaid).status, "invited");
+      // Foreign admin not admitted here: the stranger it invited is unreachable from this home.
+      assert.equal(host.chainAuthorized(foreign), false);
+      assert.throws(() => host.assertOutbound(stranger._identity.uuaid, stranger._identity.publicKeyHex, { inviteeOf: foreign }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
+      await assert.rejects(host.deliver(stranger._identity.uuaid, stranger._identity.publicKeyHex, { _group: {} }, "message", { inviteeOf: foreign }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
+      // Positive control: once that admin is admitted here under its chain key, the same row satisfies the exception.
+      host.runtime.policy.agents[foreignAdmin._identity.uuaid] = { kind: "agent", publicKey: foreignAdmin._identity.publicKeyHex, capabilities: CAPS };
+      assert.equal(host.assertOutbound(stranger._identity.uuaid, stranger._identity.publicKeyHex, { inviteeOf: foreign }), "invitee");
+      // Admitted under a different key: not the chain's admin, so still refused.
+      host.runtime.policy.agents[foreignAdmin._identity.uuaid].publicKey = key()._identity.publicKeyHex;
+      assert.throws(() => host.assertOutbound(stranger._identity.uuaid, stranger._identity.publicKeyHex, { inviteeOf: foreign }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
+      // A chain this home authored keeps the exception (the seat-a-stranger flow).
+      const own = await host.create({ name: "mine", members: [`${stranger._identity.uuaid}:${stranger._identity.publicKeyHex}`] });
+      assert.equal(host.chainAuthorized(host.groups.load(own.space)), true);
+      assert.equal(own.sent[0].accepted, true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { await close(); }
+});
+
+// RedTeam COND-B: policy.blocked is checked on every send, so a stale admission of a since-blocked key never passes.
+test("space: COND-B — a blocked key is refused on every send, under any spelling, and reported per recipient", async () => {
+  const { keys: [, guestK], drivers: [host, guest], close } = await world(2);
+  try {
+    const { space } = await host.create({ name: "block room", members: [guestK._identity.uuaid] });
+    await guest.poll(); await guest.join({ space }); const s = await host.poll(); await host.accept({ signal: s.signals[0].signal }); await guest.poll();
+    const g = guestK._identity.uuaid;
+    assert.equal(host.assertOutbound(g, guestK._identity.publicKeyHex), "admitted");
+    // Blocked under another namespace spelling of the same key: still the same key, still refused.
+    const respelled = g.replace(/^uuaid:[a-z]+:/, "uuaid:pillar:");
+    assert.notEqual(respelled, g);
+    host.runtime.policy.blocked = [respelled];
+    assert.throws(() => host.assertOutbound(g, guestK._identity.publicKeyHex), (e) => e.code === "RECIPIENT_BLOCKED");
+    await assert.rejects(host.deliver(g, guestK._identity.publicKeyHex, { text: "hi" }), (e) => e.code === "RECIPIENT_BLOCKED");
+    const said = await host.speak({ space, text: "not to the blocked" });
+    assert.deepEqual(said.sent.map((x) => [x.to, x.accepted, x.error]), [[g, false, "RECIPIENT_BLOCKED"]]);
+    // A blocked admin's chain no longer authorizes the invitee exception either: on the guest's side the chain's
+    // genesis admin is the host, so blocking the host there revokes that chain's exception (world() shares one policy).
+    host.runtime.policy.blocked = [];
+    assert.equal(guest.chainAuthorized(guest.groups.load(space)), true);
+    guest.runtime.policy.blocked = [host.self.uuaid];
+    assert.equal(guest.chainAuthorized(guest.groups.load(space)), false);
+  } finally { await close(); }
+});
+
+// Holder gap: the supported raw-envelope API is reachable through the public ./spaces subpath, with no deep import.
+test("spaces: createGroupReceiver from @uuaid/agent-commons/spaces drives judgeEnvelope to a real verdict", async () => {
+  const { keys: [hostK, guestK], drivers: [host, guest], close } = await world(2);
+  try {
+    const spaces = await import("@uuaid/agent-commons/spaces");
+    assert.equal(typeof spaces.createGroupReceiver, "function");
+    const { space } = await host.create({ name: "public api room", members: [guestK._identity.uuaid] });
+    await guest.poll(); await guest.join({ space }); const s = await host.poll(); await host.accept({ signal: s.signals[0].signal }); await guest.poll();
+    const { buildGroupTag } = await import("../src/spaces/pillar-group.mjs");
+    const env = seal(hostK, { recipient: guestK._identity.uuaid, recipientPublicKey: guestK._identity.publicKeyHex, kind: "message", payload: { text: "via the public api", _group: buildGroupTag(host.groups.load(space), { op: "message" }) } });
+    const receiver = spaces.createGroupReceiver({ home: guest.groups.dir.replace(/\/groups-v2$/, ""), keychain: guestK });
+    const j = spaces.judgeEnvelope(receiver, guestK, env);
+    assert.equal(j.verdict, "accepted");
+    assert.equal(j.group, space);
+    assert.throws(() => spaces.createGroupReceiver({ home: "x", keychain: {} }), (e) => e.code === "NO_IDENTITY");
+    assert.throws(() => spaces.createGroupReceiver({ keychain: guestK }), (e) => e.code === "HOME");
+  } finally { await close(); }
+});

@@ -19,6 +19,10 @@ export declare class ContinuityMemory {
 export declare class ContinuityError extends Error {code:string}
 export declare class MemoryContinuityStore implements ContinuityStore {get(key:string,fallback?:unknown):any;set(key:string,value:unknown):void;transaction<T>(fn:()=>T):T}
 export declare const CONTINUITY_PROTOCOL:string;
+export interface ContinuityLimits {maxEntries:number;maxBytes:number;maxEntryBytes:number;retentionMs:number}
+export declare const DEFAULT_LIMITS:Readonly<ContinuityLimits>;
+/** Throws ContinuityError(LIMIT_EXCEEDED, ...) when a state exceeds the limits (and, when age is true, the retention window). */
+export declare function assertWithinLimits(state:{entries:ContinuityEntry[]},limits:ContinuityLimits,now?:()=>number,age?:boolean):void;
 export declare const PROVENANCE_SOURCES:readonly ProvenanceSource[];
 export declare function validateSlot(slot:string):string;
 export declare function verifyContinuity(state:unknown,owner:unknown,options?:any):any;

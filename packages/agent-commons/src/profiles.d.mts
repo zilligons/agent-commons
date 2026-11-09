@@ -10,3 +10,7 @@ export function encode(text:string,lexicon:Record<string,string>):string;
 export function decode(text:string,lexicon:Record<string,string>):string;
 export function verifyDocument(document:any):any;
 export const BASE_PROTOCOL:"agent-commons/1";
+/** Throws unless the value is plain JSON (null, string, boolean, safe integer, arrays and plain objects of those). */
+export function assertJSON(value:unknown):void;
+/** Throws "Invalid lexicon" unless the lexicon is a valid symbol map; returns nothing on success. */
+export function validateLexicon(lexicon:unknown):void;

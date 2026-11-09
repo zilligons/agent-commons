@@ -14,10 +14,13 @@ const { initialize,loadRuntime,saveConfig,CAPABILITIES }=await import("../src/co
 const { CommonsCarrier,RegistryTrust,createProfile,signDocument,BASE_PROTOCOL,initializeCohort,cohortStatus }=await import("../src/index.mjs");
 const { keyBindsAgentUuaid,keyIsBlocked }=await import("../src/uuaid-namespace.mjs");
 const args=process.argv.slice(2),command=args.shift()??"help",flags={};
-for(let i=0;i<args.length;i++){if(!args[i].startsWith("--"))throw new Error("Use named --flags");const key=args[i].slice(2);flags[key]=(args[i+1]&&!args[i+1].startsWith("--"))?args[++i]:true}
+// A positional argument is reported through the same JSON error path as every other refusal (inside the try below).
+let flagError=null;
+for(let i=0;i<args.length;i++){if(!args[i].startsWith("--")){flagError=new Error(`Use named --flags (unexpected argument: ${String(args[i]).slice(0,80)})`);break}const key=args[i].slice(2);flags[key]=(args[i+1]&&!args[i+1].startsWith("--"))?args[++i]:true}
 const print=value=>console.log(JSON.stringify(value,null,2));
 const input=()=>JSON.parse(readFileSync(flags.file??0,"utf8"));
 try{
+  if(flagError)throw flagError;
   // init --carrier <url>[,<url>...]: set the home's carriers at init (validated like the runtime does), so a CLI room
   // needs no hand-edited config.json.
   // Validate --carrier BEFORE any home is created, so a bad URL never leaves a half-made home behind.
@@ -49,7 +52,7 @@ try{
   };
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
-    init --home <directory> --target local|agentnet.chat|zilligon.com [--carrier <url>[,<url>...]] [--square <url>]
+    init --home <directory> --target local|agentnet.chat|zilligon.com [--name <text>] [--carrier <url>[,<url>...]] [--square <url>]
         (init reports squareListing: not-checked, or with --square the listing url and expiry / not-listed)
     init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>] [--square <url>]
         [--allow-file-protection]   (bring your own key: the identity you already are, address intact;
@@ -67,9 +70,9 @@ try{
     square resolve --url <square> --uuaid <id>  |  square directory --url <square> [--limit <n>] [--cursor <c>]
     square serve --db <file> [--port <n>] [--bind 127.0.0.1] [--public] [--trust-proxy]
     conformance [--file <vectors.json>]   (prove this build hears wild-format envelopes)
-    cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com]
+    cohort-init --home <private directory> [--target local|agentnet.chat|zilligon.com] [--controller <id>]
     cohort-status --home <cohort directory>
-    identity|status|doctor [--home <directory>]
+    identity|status|doctor [--home <directory>]   (doctor --network also counts the registry's standards)
     admit --uuaid <id> --public-key <hex> [--credential <id>] [--capabilities <comma-separated scopes>]
     profile --file <JSON fixtures/profile definition>
     propose --profile <digest> --phrase <exact repeated phrase>
@@ -82,7 +85,7 @@ try{
     send-control --recipient <uuaid> --profile <digest> --file <signed JSON>
     poll|flush|audit
     retry-outbox --id <quarantined-envelope-id>
-    serve --role host|carrier --port 8787 [--bind 127.0.0.1]
+    serve --role host|carrier --port 8787 [--bind 127.0.0.1] [--public-url <url>]
     Global operation requires configured UUAID credentials, IAASO digest pins,
     and explicit deployment policy. No package publish or public enrollment is automatic.`);
   }else if(command==="cohort-init"){print(initializeCohort({home:flags.home,target:flags.target??"local",controllerId:flags.controller??"local-operator"}))}

@@ -86,7 +86,7 @@ for (const namespace of ["foundation", "agentnet", "pillar"]) {
     const before = sha256(source.path);
     const home = join(dir, "commons");
     withEnv({ PILLAR_PASSPHRASE: passphrase }, () => {
-      const result = initializeFromKeychain({ home, sourceKeychainPath: source.path });
+      const result = initializeFromKeychain({ home, allowFileProtection: true, sourceKeychainPath: source.path });
       assert.equal(result.identitySource, "imported");
       assert.equal(result.identity.uuaid, source.identity.uuaid);
       assert.equal(result.identity.publicKeyHex, source.identity.publicKeyHex);
@@ -140,7 +140,7 @@ test("a version-2 (scrypt) keychain from Pillar >= 2.5.3 imports; a wrong passph
   writeFileSync(tooCostly, JSON.stringify({ ...readJson(source.path), kdf: { name: "scrypt", N: 2 ** 21, r: 8, p: 1 } }));
   assert.throws(() => loadImportIdentity({ sourceKeychainPath: tooCostly, sourcePassphrase: passphrase }), error => error.code === "IMPORT_SOURCE_MALFORMED" && /out of bounds/.test(error.message));
   withEnv({ PILLAR_PASSPHRASE: passphrase }, () => {
-    const result = initializeFromKeychain({ home, sourceKeychainPath: source.path });
+    const result = initializeFromKeychain({ home, allowFileProtection: true, sourceKeychainPath: source.path });
     assert.equal(result.identity.uuaid, source.identity.uuaid);
     assertImportedHome(home, source);
   });
@@ -170,7 +170,7 @@ test("a wrong passphrase is refused, leaves no home, and a correct retry into th
   withEnv({ PILLAR_PASSPHRASE: wrong }, () => assert.throws(() => initializeFromKeychain({ home, sourceKeychainPath: source.path }), /did not open/));
   assert.deepEqual(readdirSync(home), [], "a pre-existing empty home stays empty");
   withEnv({ PILLAR_PASSPHRASE: passphrase }, () => {
-    assert.equal(initializeFromKeychain({ home, sourceKeychainPath: source.path }).identity.uuaid, source.identity.uuaid);
+    assert.equal(initializeFromKeychain({ home, allowFileProtection: true, sourceKeychainPath: source.path }).identity.uuaid, source.identity.uuaid);
     assertImportedHome(home, source);
   });
   assert.equal(sha256(source.path), before);
@@ -301,4 +301,22 @@ test("initialize() without an identity still mints a new agentnet identity", () 
     const loaded = withEnv({}, () => loadRuntime(home));
     try { assert.equal(loaded.runtime.uuaid, result.identity.uuaid); } finally { loaded.store.close(); }
   }
+}));
+
+// Custody (RedTeam Q3 / holder gap 4): a passphrase-protected key never silently becomes a file-permission-only copy.
+test("a passphrase-protected key without AGENT_COMMONS_PASSPHRASE is refused and leaves no home, unless the downgrade is explicit", () => withTmp(dir => {
+  const passphrase = newPassphrase();
+  const source = pillarKeychain(join(dir, "pillar"), { uuaidNamespace: "agentnet" }, passphrase);
+  const before = sha256(source.path);
+  const home = join(dir, "commons");
+  withEnv({ PILLAR_PASSPHRASE: passphrase }, () => {
+    assert.throws(() => initializeFromKeychain({ home, sourceKeychainPath: source.path }), e => e.code === "IMPORT_PROTECTION_DOWNGRADE" && /home was not created/.test(e.message));
+    assert.ok(homeLeftEmpty(home), "a refused downgrade leaves nothing that would block a retry");
+    assert.throws(() => initializeFromKeychain({ home, sourceKeychainPath: source.path, allowFileProtection: "yes" }), e => e.code === "IMPORT_PROTECTION_DOWNGRADE", "only a literal true opts in");
+    const result = initializeFromKeychain({ home, sourceKeychainPath: source.path, allowFileProtection: true });
+    assert.equal(result.identity.uuaid, source.identity.uuaid);
+    assert.equal(result.keyProtection, "file-permissions-with-colocated-local-secret");
+    assert.equal(result.warnings.length, 1);
+  });
+  assert.equal(sha256(source.path), before);
 }));

@@ -142,3 +142,24 @@ test("space: speak refuses before active; join refuses a non-invitee; list repor
     assert.equal(host.list()[0].admin, host.self.uuaid);
   } finally { await close(); }
 });
+
+// RedTeam PR7-1: the transport does not check recipients, so the driver enforces outbound admission itself.
+test("space: outbound admission — a stranger named inline gets ONLY its invite manifests; nothing else reaches it until admitted", async () => {
+  const { drivers: [host], close } = await world(1);
+  try {
+    const stranger = key();
+    const ref = `${stranger._identity.uuaid}:${stranger._identity.publicKeyHex}`;
+    // Inviting by inline key is allowed: the invite manifest goes to the invitee the signed chain names.
+    const created = await host.create({ name: "open door", members: [ref] });
+    assert.equal(created.sent.length, 1);
+    assert.equal(created.sent[0].accepted, true);
+    // A room message is NOT sent to the non-admitted invitee (it is invited, not active, and not admitted).
+    const said = await host.speak({ space: created.space, text: "only for admitted members" });
+    assert.equal(said.sent.length, 0);
+    // A direct deliver to a non-admitted key outside the invite exception is refused.
+    await assert.rejects(host.deliver(stranger._identity.uuaid, stranger._identity.publicKeyHex, { text: "hi" }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
+    // The invite exception needs the chain to name THAT key as invited: a different key for the same uuaid is refused.
+    const other = key();
+    await assert.rejects(host.deliver(stranger._identity.uuaid, other._identity.publicKeyHex, { text: "hi" }, "message", { inviteeOf: host.groups.load(created.space) }), (e) => e.code === "RECIPIENT_NOT_ADMITTED");
+  } finally { await close(); }
+});

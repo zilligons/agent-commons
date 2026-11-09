@@ -72,9 +72,26 @@ export class SpaceDriver {
     return this.runtime.policy.agents?.[uuaid]?.publicKey ?? null;
   }
 
-  async deliver(to, key, payload, kind = "message") {
+  /**
+   * Outbound admission (RedTeam PR7-1): the transport itself does not check recipients, so the driver does. A space
+   * sends only to an agent admitted here under exactly the key used, with commons:message, and not blocked. The one
+   * exception is `inviteeOf`: manifests to a member that the group's own signed chain lists as INVITED under that key,
+   * so an admin can seat a stranger it named; that recipient still cannot speak until the admin admits it.
+   */
+  assertOutbound(to, key, { inviteeOf = null } = {}) {
+    const agent = this.runtime.policy.agents?.[to];
+    if (agent && agent.kind === "agent" && agent.publicKey === key && agent.capabilities?.includes("commons:message")) return "admitted";
+    if (inviteeOf) {
+      const row = head(inviteeOf).members.find((r) => r.uuaid === to);
+      if (row && row.status === "invited" && row.key === key) return "invitee";
+    }
+    fail("RECIPIENT_NOT_ADMITTED", `${to} is not admitted here under that key; admit it first (agent-commons admit)`);
+  }
+
+  async deliver(to, key, payload, kind = "message", { inviteeOf = null } = {}) {
     if (!this.runtime.transport) fail("NO_CARRIER", "No carrier configured in this home (config.json carriers)");
     if (!key) fail("MEMBER_KEY", `No key for ${to}`);
+    this.assertOutbound(to, key, { inviteeOf });
     const envelope = seal(this.keychain, { recipient: to, recipientPublicKey: key, kind, payload });
     try {
       const receipt = await this.runtime.transport.deliver(envelope, { timeoutMs: 10000 });
@@ -100,7 +117,14 @@ export class SpaceDriver {
         // An invitation still being assembled: there is no local record yet, so ask at version 0.
         tag = { v: 2, id: groupId, name: "", members: [], msgId: `gm-${randomBytes(16).toString("hex")}`, op: "manifest.request", mv: { version: 0, hash: "0".repeat(64) }, want: s.want };
       } else { results.push({ to: s.to, op: s.op, accepted: false, error: "unknown-group" }); continue; }
-      results.push({ op: s.op, ...(await this.deliver(s.to, s.key ?? this.keyFor(rec, s.to), { _group: tag })) });
+      // Only a manifest to a member the signed chain lists as invited may go to a not-yet-admitted key.
+      const inviteeOf = rec && s.op === "manifest" ? rec : null;
+      try {
+        results.push({ op: s.op, ...(await this.deliver(s.to, s.key ?? this.keyFor(rec, s.to), { _group: tag }, "message", { inviteeOf })) });
+      } catch (error) {
+        if (error?.code !== "RECIPIENT_NOT_ADMITTED") throw error;
+        results.push({ to: s.to, op: s.op, accepted: false, error: error.code });
+      }
     }
     return results;
   }
@@ -165,7 +189,10 @@ export class SpaceDriver {
     if (to.length > fanOutBudget(head(rec).members.length)) fail("FAN_OUT", "Fan-out budget exceeded");
     const tag = buildGroupTag(rec, { op: "message" });
     const sent = [];
-    for (const u of to) sent.push(await this.deliver(u, this.keyFor(rec, u), { ...payload, text, _group: tag }));
+    for (const u of to) {
+      try { sent.push(await this.deliver(u, this.keyFor(rec, u), { ...payload, text, _group: tag })); }
+      catch (error) { if (error?.code !== "RECIPIENT_NOT_ADMITTED") throw error; sent.push({ to: u, accepted: false, error: error.code }); }
+    }
     return { space, msgId: tag.msgId, sent };
   }
 

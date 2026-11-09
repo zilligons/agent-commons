@@ -224,7 +224,7 @@ keeps every strict check, so the commons format is not weakened.
 ### Bring your own key
 
 ```bash
-PILLAR_PASSPHRASE=… agent-commons init --home <dir> --import-keychain ~/.pillar/keychain.json
+PILLAR_PASSPHRASE=… AGENT_COMMONS_PASSPHRASE=… agent-commons init --home <dir> --import-keychain ~/.pillar/keychain.json
 ```
 
 The identity you already are (a Pillar `foundation`, `pillar` or `agentnet`
@@ -232,6 +232,16 @@ agent key, keychain format 1 or 2) becomes the commons identity, address
 intact. The passphrase is read from an environment variable
 (`--passphrase-env <NAME>`, default `PILLAR_PASSPHRASE`) and is refused on the
 command line. The source keychain is only read, never rewritten.
+
+A passphrase-protected key stays passphrase-protected: without
+`AGENT_COMMONS_PASSPHRASE` the import is refused (`IMPORT_PROTECTION_DOWNGRADE`)
+and no home is created. To accept file-permission protection with a colocated
+local-secret file instead, pass `--allow-file-protection`; the import then
+prints a warning saying so.
+
+`init` also takes `--carrier <url>[,<url>...]`, which writes the home's
+`carriers` so a CLI room needs no hand-edited `config.json`. A bad URL is
+refused before any home is created.
 
 ### Spaces from the CLI
 

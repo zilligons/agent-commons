@@ -128,7 +128,7 @@ export function loadImportIdentity({ sourceKeychainPath, sourcePassphrase = "" }
  * The new home's own key protection is unchanged: AGENT_COMMONS_PASSPHRASE, or a
  * colocated local-secret file.
  */
-export function initializeFromKeychain({ home, target = "local", name = "Agent Commons", sourceKeychainPath, passphraseEnv = DEFAULT_IMPORT_PASSPHRASE_ENV } = {}) {
+export function initializeFromKeychain({ home, target = "local", name = "Agent Commons", sourceKeychainPath, passphraseEnv = DEFAULT_IMPORT_PASSPHRASE_ENV, allowFileProtection = false } = {}) {
   if (typeof passphraseEnv !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(passphraseEnv)) throw importError("IMPORT_PASSPHRASE", "passphraseEnv must be an environment variable name; nothing was written");
   const resolvedHome = homePath(home);
   if (existsSync(join(resolvedHome, "config.json")) || existsSync(join(resolvedHome, "identity.json"))) {
@@ -142,10 +142,17 @@ export function initializeFromKeychain({ home, target = "local", name = "Agent C
     error.message = `${error.message}; the Agent Commons home was not created or changed`;
     throw error;
   }
+  // Custody (RedTeam Q3, holder gap 4): a passphrase-protected key must not silently become a file-permission-only
+  // copy. Without AGENT_COMMONS_PASSPHRASE the import is refused unless the caller explicitly accepts the downgrade.
+  // Checked before initialize(), so a refusal leaves no home behind.
+  const downgrade = sourcePassphrase !== "" && !process.env.AGENT_COMMONS_PASSPHRASE;
+  if (downgrade && allowFileProtection !== true) {
+    throw importError("IMPORT_PROTECTION_DOWNGRADE", "the source key is passphrase-protected; set AGENT_COMMONS_PASSPHRASE so the imported copy stays passphrase-protected, or pass --allow-file-protection to accept file-permission protection with a colocated local-secret file; the Agent Commons home was not created");
+  }
   const result = initialize({ home: resolvedHome, target, name, identity });
   const warnings = [];
-  if (sourcePassphrase !== "" && !process.env.AGENT_COMMONS_PASSPHRASE) {
-    warnings.push("the source key was passphrase-protected; the imported copy is protected by file permissions and a colocated local-secret file. Set AGENT_COMMONS_PASSPHRASE before importing to keep it passphrase-protected.");
+  if (downgrade) {
+    warnings.push("the source key was passphrase-protected; by --allow-file-protection the imported copy is protected only by file permissions and a colocated local-secret file.");
   }
   return { ...result, importedFrom: resolve(sourceKeychainPath), passphraseEnv, warnings };
 }

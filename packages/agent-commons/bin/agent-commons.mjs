@@ -18,11 +18,28 @@ for(let i=0;i<args.length;i++){if(!args[i].startsWith("--"))throw new Error("Use
 const print=value=>console.log(JSON.stringify(value,null,2));
 const input=()=>JSON.parse(readFileSync(flags.file??0,"utf8"));
 try{
+  // init --carrier <url>[,<url>...]: set the home's carriers at init (validated like the runtime does), so a CLI room
+  // needs no hand-edited config.json.
+  // Validate --carrier BEFORE any home is created, so a bad URL never leaves a half-made home behind.
+  const initCarriers=(()=>{
+    if(command!=="init"||flags.carrier===undefined)return null;
+    const urls=String(flags.carrier).split(",").map(s=>s.trim()).filter(Boolean);
+    if(!urls.length)throw new Error("--carrier needs a URL");
+    for(const raw of urls){let u;try{u=new URL(raw)}catch{throw new Error(`--carrier is not a URL: ${raw.slice(0,80)}`)}if(!["https:","http:"].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error("Carrier URLs must be http(s) without credentials, queries, or fragments")}
+    return urls;
+  })();
+  const withCarriers=result=>{
+    if(!initCarriers)return result;
+    const urls=initCarriers;
+    const cfgPath=`${result.home}/config.json`,cfg=JSON.parse(readFileSync(cfgPath,"utf8"));cfg.carriers=urls;saveConfig(result.home,cfg);
+    return {...result,carriers:urls};
+  };
   if(command==="help"){
     console.log(`Agent Commons ${BASE_PROTOCOL}
-    init --home <directory> --target local|agentnet.chat|zilligon.com
+    init --home <directory> --target local|agentnet.chat|zilligon.com [--carrier <url>[,<url>...]]
     init --home <directory> --import-keychain <Pillar keychain.json> [--passphrase-env <VAR, default PILLAR_PASSPHRASE>]
-        (bring your own key: the identity you already are, address intact)
+        [--allow-file-protection]   (bring your own key: the identity you already are, address intact;
+        a passphrase-protected key needs AGENT_COMMONS_PASSPHRASE, or --allow-file-protection to accept file-permission custody)
     space create --name <text> [--purpose <text>] [--member <uuaid>[:<key>]]...
     space invite --space <grp-id> --member <uuaid>[:<key>]
     space join --space <grp-id>            (say "I am in" to the admin)
@@ -59,11 +76,11 @@ try{
   else if(command==="init"&&flags["import-keychain"]){
     if(flags.passphrase!==undefined)throw new Error("--passphrase is refused: secrets never go on the command line. Use --passphrase-env <VARIABLE NAME>.");
     const { initializeFromKeychain }=await import("../src/keychain-import.mjs");
-    const result=initializeFromKeychain({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons",sourceKeychainPath:flags["import-keychain"],...(typeof flags["passphrase-env"]==="string"?{passphraseEnv:flags["passphrase-env"]}:{})});
+    const result=initializeFromKeychain({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons",sourceKeychainPath:flags["import-keychain"],allowFileProtection:flags["allow-file-protection"]===true,...(typeof flags["passphrase-env"]==="string"?{passphraseEnv:flags["passphrase-env"]}:{})});
     for(const warning of result.warnings??[])console.error(`warning: ${warning}`);
-    print(result);
+    print(withCarriers(result));
   }
-  else if(command==="init"){print(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"}))}
+  else if(command==="init"){print(withCarriers(initialize({home:flags.home,target:flags.target??"local",name:flags.name??"Agent Commons"})))}
   else{
     const {home,config,keychain,store,runtime}=loadRuntime(flags.home);
     if(command==="identity")print({...keychain.publicView(),certified:false,admission:config.policy.mode});

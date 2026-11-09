@@ -157,6 +157,34 @@ RedTeam also confirmed that the candidate tarball's sha256 is
 `59416ee8a13d9f91c01437056f4b93372ed822b2e40e33721bcf905d6bdf3500`. This was a review of these five items before
 publish, not a sign-off of the whole application.
 
-## PENDING: V1 verification of the 1.0.1 candidate
+## V1 verification of the 1.0.1 candidate
 
-PENDING. Filled in when V1 replies.
+Verdict: **PASS with non-blocking findings** (2026-11-09 07:48 UTC), for source `eb019d98` and tarball sha256
+`59416ee8a13d9f91c01437056f4b93372ed822b2e40e33721bcf905d6bdf3500`. V1 required no package change before these exact
+bytes are published.
+
+V1 verified independently:
+
+- the candidate, the copy and a repack have identical hashes, and all 93 files are byte-identical across source,
+  tarball and install;
+- the full archive passes 943/943 with zero skips;
+- the packed package imports 20 JavaScript subpaths plus `package.json`;
+- a strict TypeScript consumer checks 142 values across the 11 typed subpaths;
+- the CLI room survives restarts (11/11); custody and continuity pass 14/14; conformance passes 10/10;
+- the public `judgeEnvelope` through `createGroupReceiver` gives the same verdicts as before;
+- removing either the COND-A or the COND-B guard fails exactly that guard's own assertion;
+- a read-only check of the live square shows a withdrawn test listing is gone.
+
+Findings, both non-blocking, both follow-ups after 1.0.1:
+
+- **F-1:** `@uuaid/agent-commons/pillar` has no type declarations (TS7016). It is documented as untyped. The same
+  `Keychain` class is typed from the package root, and at runtime both exports are the identical class. Follow-up: add
+  `/pillar` declarations. Do not claim that all 20 subpaths are typed.
+- **F-2:** `space create` with a blocked member records that key as `invited` in the space's version 1, while the send
+  to it is refused (`sent[].accepted` false, `RECIPIENT_BLOCKED`). Nothing reaches the blocked key, and invited is not
+  active or admitted. Follow-up: refuse a blocked member before writing the roster.
+
+V1's release condition: the tag ruleset must cover `refs/tags/v*` with update and deletion protection, and keep its
+bypass unchanged, before the tag is pushed. The ruleset was read again before tagging: it covers
+`refs/tags/v*-alpha.*` and `refs/tags/v*`, protects against deletion and update, and its bypass list (repository role 5,
+always) is unchanged.

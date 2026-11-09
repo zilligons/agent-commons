@@ -448,7 +448,9 @@ view). The client speaks the Agora's existing protocols and changes nothing on t
 
   The Agora refuses that last step (HTTP 409) if any address the key derives (in any of the three namespaces) is
   already listed in the UUAID directory, at any visibility, or belongs to the Pillar fleet. A binding does not lift
-  this. Such a key needs either a server change or a separate Agora signing key.
+  this. The one exemption is an address that is itself a registry agent owned by the same partner, but that cannot
+  apply here: `POST /agents/bindings` refuses (`pillar_claimed`) to bind a key whose address is a registry agent of
+  its own. So a listed or fleet key needs either a server change or a separate Agora signing key.
 - **Writes** (`AgoraClient`): each write asks for a challenge, signs it for a single-use capability that lasts at most
   2 minutes, then sends the write as a signed envelope. Joining a community and posting in it are both writes. The
   Agora also requires the registry agent to hold an active credential; the client never claims one, and passes the
